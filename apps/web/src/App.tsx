@@ -232,8 +232,7 @@ export function App() {
         onMouseLeave={() => { dragRef.current = null; }}>
         <div style={{ padding: 12 }}>中央プレビュー（codeアダプタ予定地） parent={parentId ?? "root"} <button onClick={addWindow}>窓を追加</button></div>
         {wins.filter((w) => !w.minimized).map((w) => (
-          <div key={w.id} style={{ position: "absolute", left: w.x, top: 60 + w.y, width: 340, background: "#fff", border: "1px solid #999", zIndex: w.z }}
-            onMouseDown={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, z: Math.max(...ws.map((y) => y.z)) + 1 } : x))}>
+          <div key={w.id} style={{ position: "absolute", left: w.x, top: 60 + w.y, width: 340, background: "#fff", border: "1px solid #999", zIndex: w.z }}>
             <div style={{ background: "#eee", padding: 4, display: "flex", justifyContent: "space-between", cursor: "move" }}
               onMouseDown={(e) => {
                 e.stopPropagation();
@@ -246,7 +245,7 @@ export function App() {
                 <button onClick={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, minimized: true } : x))}>最小化</button>
               </span>
             </div>
-            <div style={{ padding: 8 }}>
+            <div style={{ padding: 8 }} onMouseDown={(e) => e.stopPropagation()}>
               <textarea value={w.id === wins[0]?.id ? prompt : ""} onChange={(e) => setPrompt(e.target.value)} rows={3} style={{ width: "100%" }} placeholder="この窓からチャット送信（先頭窓のみ有効・P0簡易）" />
               <button onClick={send} disabled={!roomId || !prompt}>送信＝子ノード作成</button>
             </div>
