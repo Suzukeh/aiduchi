@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, RefreshCw, GitBranch, List, Columns, Check, Users, KeyRound } from "lucide-react";
+import { Plus, RefreshCw, GitBranch, List, Columns, Check, Users, KeyRound, Link2, Copy } from "lucide-react";
 import { useStore } from "../store";
 import { STATUS_META, type NodeMeta } from "../types";
 
@@ -83,6 +83,7 @@ export function Sidebar() {
             <button className="rounded p-1 hover:bg-white/10 hover:text-gray-300" onClick={() => refreshNodes()} title="更新">
               <RefreshCw size={11} />
             </button>
+            <ShareButton />
           </div>
         )}
         {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-[11px] text-red-400">{error}</div>}
@@ -118,6 +119,31 @@ export function Sidebar() {
 
       <ByokSection />
     </aside>
+  );
+}
+
+function ShareButton() {
+  const [copied, setCopied] = useState(false);
+  const roomId = useStore((s) => s.roomId);
+  const token = useStore((s) => s.token);
+
+  function copy() {
+    const url = `${location.origin}/?room=${roomId}&token=${token}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <button
+      className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-gray-400 hover:bg-white/10 hover:text-gray-200"
+      onClick={copy}
+      title="参加リンクをコピー"
+    >
+      {copied ? <Copy size={11} className="text-emerald-400" /> : <Link2 size={11} />}
+      {copied ? "コピー済み" : "共有"}
+    </button>
   );
 }
 
