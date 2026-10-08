@@ -1,0 +1,12 @@
+{
+  "name": "aiduchi",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/web", "server", "packages/protocol"],
+  "scripts": {
+    "dev": "npm --prefix server run dev & npm --prefix apps/web run dev",
+    "dev:sync": "npm --prefix server run dev:sync",
+    "build": "npm --workspace packages/protocol run build && npm --workspace server run build && npm --workspace apps/web run build",
+    "start": "npm --prefix server run start"
+  }
+}

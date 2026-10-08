@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    depends_on:
+      - sync
+  sync:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.sync
+    ports:
+      - "1234:1234"
+    env_file: .env
+  web:
+    build: ./apps/web
+    ports:
+      - "5173:5173"

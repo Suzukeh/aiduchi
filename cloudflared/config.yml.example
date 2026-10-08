@@ -1,0 +1,6 @@
+tunnel: aiduchi-dev
+credentials-file: /home/archuser1/.cloudflared/aiduchi-dev.json
+ingress:
+  - hostname: collab.example.com
+    service: http://localhost:3000
+  - service: http_status:404
