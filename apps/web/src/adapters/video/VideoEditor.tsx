@@ -3,6 +3,7 @@ import { emptyVideoProject, applyVideoPatch, videoDiffSummary, type VideoProject
 import { Timeline } from "./Timeline";
 import { Preview } from "./Preview";
 import { Inspector } from "./Inspector";
+import { isExportSupported, exportAndDownload, type ExportProgress } from "./export";
 
 type Props = {
   /** サーバーから取得したプロジェクト（初回ロード用） */
@@ -17,6 +18,9 @@ export function VideoEditor({ initialProject, aiPatch, onProjectChange }: Props)
   const [currentFrame, setCurrentFrame] = useState(0);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportError, setExportError] = useState("");
   const rafRef = useRef<number>(0);
   const projectRef = useRef(project);
   projectRef.current = project;
@@ -80,6 +84,18 @@ export function VideoEditor({ initialProject, aiPatch, onProjectChange }: Props)
     setSelectedItemId(null);
   }, [update]);
 
+  async function handleExport() {
+    if (!isExportSupported()) { setExportError("このブラウザはWebCodecs非対応です（Chrome/Edge推奨）"); return; }
+    setExporting(true); setExportError(""); setExportProgress(null);
+    try {
+      await exportAndDownload(projectRef.current, "aiduchi-export", (p) => setExportProgress(p));
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "export failed");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, height: "100%" }}>
       {/* transport */}
@@ -89,7 +105,17 @@ export function VideoEditor({ initialProject, aiPatch, onProjectChange }: Props)
         <input type="range" min={0} max={Math.max(300, ...Object.values(project.items).map((i) => i.startFrame + i.durationFrames))}
           value={currentFrame} onChange={(e) => { setPlaying(false); setCurrentFrame(Number(e.target.value)); }} style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: "#888", width: 80, textAlign: "right" }}>{currentFrame}f</span>
+        <button onClick={handleExport} disabled={exporting}
+          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 4, border: "1px solid #4a90d9", background: exporting ? "#333" : "#4a90d9", color: "#fff", cursor: exporting ? "wait" : "pointer" }}>
+          {exporting ? `MP4出力中 ${exportProgress?.percent ?? 0}%` : "MP4出力"}
+        </button>
       </div>
+      {exportError && <div style={{ color: "#ff6b6b", fontSize: 11 }}>{exportError}</div>}
+      {exporting && exportProgress && (
+        <div style={{ height: 3, background: "#222", borderRadius: 2 }}>
+          <div style={{ height: "100%", background: "#4a90d9", borderRadius: 2, width: `${exportProgress.percent}%`, transition: "width 0.2s" }} />
+        </div>
+      )}
 
       {/* Preview + Inspector */}
       <div style={{ display: "flex", gap: 4, flex: 1, minHeight: 200 }}>

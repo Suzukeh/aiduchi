@@ -1,5 +1,6 @@
 # DECISIONS — 決定ログ（新しいものほど上）
 
+- D16 (2026-10-08): exportはWebCodecs + mp4-muxer（H.264）。描画はrenderSceneToContext純粋関数をPreview/export共有でゼロドリフト。
 - D15 (2026-10-08): videoアダプタのProjectJSONはprotocolに集約（サーバー・Web共有）。patch stepsはtyped（8種）に限定し、AI語彙=Inspector操作のみ。
 - D14 (2026-10-08): Yjsクライアントは`@hocuspocus/provider`採用（y-websocketはHocuspocus認証プロトコル非対応のため）。
 - D13 (2026-10-08): baseUrlは `/chat/completions` 付きでも正規化して叩く。x-opencode-sessionはroom単位の安定IDを自動送信。response_format非送信で互換性優先。
