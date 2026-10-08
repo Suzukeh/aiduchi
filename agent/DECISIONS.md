@@ -1,5 +1,6 @@
 # DECISIONS — 決定ログ（新しいものほど上）
 
+- D14 (2026-10-08): Yjsクライアントは`@hocuspocus/provider`採用（y-websocketはHocuspocus認証プロトコル非対応のため）。
 - D13 (2026-10-08): baseUrlは `/chat/completions` 付きでも正規化して叩く。x-opencode-sessionはroom単位の安定IDを自動送信。response_format非送信で互換性優先。
 - D12 (2026-10-08): `agent/`引き継ぎmdを常設し、作業のたびにSTATUS更新を義務化。
 - D11 (2026-10-08): TunnelはNamed必須、Quick禁止（SSE不可・URL不安定）。
