@@ -76,6 +76,21 @@ export function saveWindows(roomId: string, token: string, windows: unknown[]) {
   }).catch(() => undefined);
 }
 
+export function saveSnapshot(
+  roomId: string,
+  token: string,
+  parentNodeId: string | null,
+  files: Record<string, string>,
+  label: string,
+  userName: string,
+) {
+  return req<NodeMeta>(`/api/rooms/${roomId}/snapshots`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-room-token": token, "x-user-name": userName },
+    body: JSON.stringify({ parentNodeId, files, label }),
+  });
+}
+
 export function loadWindows(roomId: string, token: string) {
   return req<unknown[]>(`/api/rooms/${roomId}/windows`, { headers: { "x-room-token": token } });
 }

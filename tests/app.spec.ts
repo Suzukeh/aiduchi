@@ -62,8 +62,32 @@ test.describe("aiduchi E2E", () => {
     // ファイルタブに切り替え
     await page.getByRole("button", { name: "ファイル" }).first().click();
     // ファイル一覧にREADME.mdが見える
-    await expect(page.getByText("README.md")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("README.md").first()).toBeVisible({ timeout: 10_000 });
     // notes/xxx.mdも見える
     await expect(page.getByText(/notes\//).first()).toBeVisible();
+  });
+
+  test("ファイルを手動編集して保存できる", async ({ page }) => {
+    await page.goto("/");
+    await page.getByPlaceholder("room name").fill("e2e-edit");
+    await page.getByRole("button", { name: "作成" }).click();
+    await expect(page.getByRole("button", { name: "新しい窓", exact: true })).toBeEnabled({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "新しい窓", exact: true }).click();
+    const textarea = page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first();
+    await textarea.fill("make a note file");
+    await textarea.press("Control+Enter");
+    await expect(page.getByText("+notes/").first()).toBeVisible({ timeout: 15_000 });
+
+    // ファイルタブ→編集
+    await page.getByRole("button", { name: "ファイル" }).first().click();
+    await page.getByRole("button", { name: "編集" }).first().click();
+    const editor = page.locator("textarea.font-mono").first();
+    await editor.fill("edited by test");
+    // 保存ボタンが出る
+    await page.getByRole("button", { name: "保存" }).click();
+
+    // リストに「手動編集」ノードが現れる
+    await expect(page.getByText(/手動編集|manual edit/).first()).toBeVisible({ timeout: 15_000 });
   });
 });

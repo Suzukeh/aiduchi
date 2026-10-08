@@ -70,6 +70,36 @@ app.get("/api/rooms/:id/snapshots/:nodeId", (req, res) => {
   res.json(JSON.parse(snap.data));
 });
 
+// 手動編集の保存: 現在のファイル内容を新ノード＋スナップショットとして記録
+app.post("/api/rooms/:id/snapshots", (req, res) => {
+  const room = authRoom(req);
+  if (!room) return res.status(404).json({ error: "not found" });
+  const { parentNodeId, files, label } = req.body ?? {};
+  if (!files || typeof files !== "object") return res.status(400).json({ error: "files required" });
+  const clean: Record<string, string> = {};
+  let total = 0;
+  for (const [k, v] of Object.entries(files as Record<string, unknown>)) {
+    if (typeof k !== "string" || typeof v !== "string") continue;
+    if (k.length > 200 || v.length > 200_000) return res.status(400).json({ error: `file too large: ${k}` });
+    total += v.length;
+    clean[k] = v;
+  }
+  if (total > 1_000_000) return res.status(400).json({ error: "snapshot too large" });
+  if (parentNodeId) {
+    const parent = db.prepare(`SELECT id FROM nodes WHERE id = ? AND roomId = ?`).get(parentNodeId, room.id);
+    if (!parent) return res.status(400).json({ error: "parent not found" });
+  }
+  const nodeId = randomUUID().slice(0, 8);
+  db.prepare(
+    `INSERT INTO nodes (id, roomId, parentId, rootId, authorType, authorLabel, prompt, status, provider, model, diffSummary, createdAt) VALUES (?, ?, ?, ?, 'user', ?, ?, 'review', NULL, NULL, ?, ?)`,
+  ).run(nodeId, room.id, parentNodeId ?? null, parentNodeId ?? "root", req.header("x-user-name") ?? "you",
+    String(label ?? "手動編集").slice(0, 200), `manual edit (${Object.keys(clean).length} files)`, now());
+  db.prepare(`INSERT INTO snapshots (id, roomId, nodeId, data, createdAt) VALUES (?, ?, ?, ?, ?)`)
+    .run(randomUUID(), room.id, nodeId, JSON.stringify({ files: clean }), now());
+  const node = db.prepare(`SELECT * FROM nodes WHERE id = ?`).get(nodeId) as NodeRow;
+  res.json(publicNode(node));
+});
+
 app.post("/api/rooms/:id/nodes", async (req, res) => {
   const room = authRoom(req);
   if (!room) return res.status(404).json({ error: "not found" });
