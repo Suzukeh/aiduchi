@@ -15,6 +15,13 @@ const OPENAI_COMPATIBLE_DEFAULTS: Record<string, string> = {
   ollama: "http://localhost:11434/v1",
 };
 
+const USER_AGENT = "aiduchi/0.1 (collaborative vibe-coding)";
+
+/** baseUrl末尾が /chat/completions でも /v1 でも動くように正規化 */
+function normalizeBase(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+}
+
 /** キー解決：BYOKヘッダ > ホストenv > null(dummy)。平文キーは返却値以外に保持・記録しない */
 export function resolveCreds(req: express.Request): Creds | { forbidden: string } | null {
   const byokProvider = req.header("x-byok-provider");
@@ -24,7 +31,7 @@ export function resolveCreds(req: express.Request): Creds | { forbidden: string 
   if (byokProvider || byokKey) {
     if (!byokProvider || !byokKey) return { forbidden: "BYOK needs both x-byok-provider and x-byok-key" };
     const baseUrl = byokBase ?? OPENAI_COMPATIBLE_DEFAULTS[byokProvider] ?? OPENAI_COMPATIBLE_DEFAULTS.openai;
-    return { provider: byokProvider, model: byokModel ?? "default", apiKey: byokKey, baseUrl, byok: true };
+    return { provider: byokProvider, model: byokModel ?? "default", apiKey: byokKey, baseUrl: normalizeBase(baseUrl), byok: true };
   }
   const hostKey = process.env.HOST_OPENAI_KEY;
   if (!hostKey) return null;
@@ -35,49 +42,126 @@ export function resolveCreds(req: express.Request): Creds | { forbidden: string 
     provider: "host",
     model: want,
     apiKey: hostKey,
-    baseUrl: process.env.HOST_OPENAI_BASE_URL ?? OPENAI_COMPATIBLE_DEFAULTS.openai,
+    baseUrl: normalizeBase(process.env.HOST_OPENAI_BASE_URL ?? OPENAI_COMPATIBLE_DEFAULTS.openai),
     byok: false,
   };
 }
 
-const PATCH_SYSTEM = `You are a code editing agent. Output ONLY a JSON object: {"steps":[{"op":"upsertFile","path":"...","content":"..."}|{"op":"deleteFile","path":"..."}]}. Max 20 steps. Keep edits minimal and consistent with the existing files.`;
+function chatUrl(creds: Creds): string {
+  return `${creds.baseUrl}/chat/completions`;
+}
+
+function chatHeaders(creds: Creds, session: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${creds.apiKey}`,
+    "User-Agent": USER_AGENT,
+    // ルーティング最適化とprompt cachingのための安定したセッションID（OpenCode Go等で必須）
+    "x-opencode-session": session,
+  };
+}
+
+const PATCH_SYSTEM = `You are a code editing agent. Output ONLY a JSON object: {"steps":[{"op":"upsertFile","path":"...","content":"..."}|{"op":"deleteFile","path":"..."}]}. Max 20 steps. Keep edits minimal and consistent with the existing files. No markdown fences, no commentary.`;
+
+/** モデル出力のコードフェンス等を剥がしてJSONを取り出す */
+function extractJson(text: string): unknown {
+  let t = text.trim();
+  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fence) t = fence[1].trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start >= 0 && end > start) t = t.slice(start, end + 1);
+  return JSON.parse(t);
+}
 
 export async function generatePatch(
   creds: Creds,
   prompt: string,
   files: Record<string, string>,
+  session: string,
 ): Promise<{ patch: { steps: { op: "upsertFile"; path: string; content: string }[] | { op: "deleteFile"; path: string }[] }; promptTokens: number; completionTokens: number }> {
   const fileList = Object.entries(files)
     .map(([p, c]) => `--- ${p} ---\n${c.slice(0, 4000)}`)
     .join("\n");
-  const res = await fetch(`${creds.baseUrl}/chat/completions`, {
+  const messages = [
+    { role: "system", content: PATCH_SYSTEM },
+    { role: "user", content: `Request: ${prompt}\n\nCurrent files:\n${fileList || "(empty)"}` },
+  ];
+  const body = {
+    model: creds.model,
+    messages,
+    temperature: 0.2,
+    max_tokens: 2000,
+    // 互換性を優先して response_format は送らない（対応プロバイダ依存のため）
+  };
+  const res = await fetch(chatUrl(creds), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${creds.apiKey}` },
-    body: JSON.stringify({
-      model: creds.model,
-      messages: [
-        { role: "system", content: PATCH_SYSTEM },
-        { role: "user", content: `Request: ${prompt}\n\nCurrent files:\n${fileList || "(empty)"}` },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.2,
-      max_tokens: 2000,
-    }),
+    headers: chatHeaders(creds, session),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(60000),
   });
-  if (!res.ok) throw new Error(`upstream ${res.status}`);
-  const body = (await res.json()) as {
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`upstream ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
     choices: { message: { content: string } }[];
     usage?: { prompt_tokens: number; completion_tokens: number };
   };
-  const parsed = CodePatch.safeParse(JSON.parse(body.choices[0]?.message?.content ?? "{}"));
-  if (!parsed.success) throw new Error("invalid patch JSON");
+  const parsed = CodePatch.safeParse(extractJson(data.choices[0]?.message?.content ?? "{}"));
+  if (!parsed.success) throw new Error(`invalid patch JSON: ${parsed.error.message.slice(0, 120)}`);
   return {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     patch: parsed.data as any,
-    promptTokens: body.usage?.prompt_tokens ?? 0,
-    completionTokens: body.usage?.completion_tokens ?? 0,
+    promptTokens: data.usage?.prompt_tokens ?? 0,
+    completionTokens: data.usage?.completion_tokens ?? 0,
   };
+}
+
+export async function* streamChat(creds: Creds, prompt: string, session: string) {
+  const res = await fetch(chatUrl(creds), {
+    method: "POST",
+    headers: chatHeaders(creds, session),
+    body: JSON.stringify({
+      model: creds.model,
+      messages: [{ role: "user", content: prompt }],
+      stream: true,
+    }),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "").then((t) => t.slice(0, 200));
+    throw new Error(`upstream ${res.status}: ${detail}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let usage = { promptTokens: 0, completionTokens: 0 };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "[DONE]") continue;
+      try {
+        const j = JSON.parse(payload) as {
+          choices?: { delta?: { content?: string } }[];
+          usage?: { prompt_tokens: number; completion_tokens: number };
+        };
+        const text = j.choices?.[0]?.delta?.content;
+        if (text) yield { text };
+        if (j.usage) usage = { promptTokens: j.usage.prompt_tokens, completionTokens: j.usage.completion_tokens };
+      } catch {
+        /* keep-aliveやコメント行は無視 */
+      }
+    }
+  }
+  yield { done: true, usage };
 }
 
 export function dummyPatch(prompt: string, nodeId: string, provider: string, model: string) {

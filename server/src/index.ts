@@ -3,7 +3,7 @@ import cors from "cors";
 import { randomUUID, createHash } from "node:crypto";
 import { CreateRoom, CreateNode, CodePatch } from "@aiduchi/protocol";
 import { db, monthUsage, type RoomRow, type NodeRow } from "./db.js";
-import { resolveCreds, generatePatch, dummyPatch } from "./ai.js";
+import { resolveCreds, generatePatch, dummyPatch, streamChat } from "./ai.js";
 
 const app = express();
 app.use(cors());
@@ -114,7 +114,7 @@ app.post("/api/rooms/:id/nodes", async (req, res) => {
       steps = dummyPatch(parsed.data.prompt, nodeId, provider, model).steps as typeof steps;
     } else {
       provider = creds.provider; model = creds.model;
-      const out = await generatePatch(creds, parsed.data.prompt, latestFiles(room.id));
+      const out = await generatePatch(creds, parsed.data.prompt, latestFiles(room.id), `aiduchi-${room.id}`);
       steps = out.patch.steps as typeof steps;
       pt = out.promptTokens; ct = out.completionTokens;
       db.prepare(`INSERT INTO ai_usage (roomId, nodeId, provider, model, promptTokens, completionTokens, byok, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -160,39 +160,10 @@ app.post("/api/rooms/:id/nodes/:nodeId/chat", async (req, res) => {
     return res.end();
   }
   try {
-    const upstream = await fetch(`${creds.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${creds.apiKey}` },
-      body: JSON.stringify({
-        model: creds.model,
-        messages: [{ role: "user", content: String(req.body?.prompt ?? "hello") }],
-        stream: true,
-      }),
-      signal: AbortSignal.timeout(120000),
-    });
-    if (!upstream.ok || !upstream.body) throw new Error(`upstream ${upstream.status}`);
-    const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
     let pt = 0, ct = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
-      for (const part of parts) {
-        const line = part.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-        const payload = line.slice(5).trim();
-        if (payload === "[DONE]") continue;
-        try {
-          const j = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[]; usage?: { prompt_tokens: number; completion_tokens: number } };
-          const text = j.choices?.[0]?.delta?.content;
-          if (text) send("token", { text });
-          if (j.usage) { pt = j.usage.prompt_tokens; ct = j.usage.completion_tokens; }
-        } catch { /* keep-alive等は無視 */ }
-      }
+    for await (const chunk of streamChat(creds, String(req.body?.prompt ?? "hello"), `aiduchi-${room.id}`)) {
+      if ("text" in chunk && chunk.text) send("token", { text: chunk.text });
+      else if ("done" in chunk && chunk.done) { pt = chunk.usage.promptTokens; ct = chunk.usage.completionTokens; }
     }
     db.prepare(`INSERT INTO ai_usage (roomId, nodeId, provider, model, promptTokens, completionTokens, byok, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(room.id, req.params.nodeId, creds.provider, creds.model, pt, ct, creds.byok ? 1 : 0, now());
