@@ -1,6 +1,4 @@
-import React, { useEffect, useState } from "react";
-import * as Y from "yjs";
-import { WebsocketProvider } from "y-websocket";
+import React, { useEffect, useRef, useState } from "react";
 
 type Node = {
   id: string; parentId: string | null; prompt: string; status: string;
@@ -8,7 +6,7 @@ type Node = {
 };
 type Win = { id: string; nodeId: string; x: number; y: number; z: number; minimized: boolean };
 
-const API = "http://localhost:3000";
+const API = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "http://localhost:3000";
 
 export function App() {
   const [roomId, setRoomId] = useState("");
@@ -22,14 +20,24 @@ export function App() {
   ]);
   const [prompt, setPrompt] = useState("");
   const [parentId, setParentId] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const [byokProvider, setByokProvider] = useState(() => localStorage.getItem("aiduchi.byokProvider") ?? "");
+  const [byokKey, setByokKey] = useState(() => localStorage.getItem("aiduchi.byokKey") ?? "");
+  const [byokModel, setByokModel] = useState(() => localStorage.getItem("aiduchi.byokModel") ?? "");
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Yjs presence stub: windows共有の受け皿（P0はローカルのみ、sync接続は任意）
-  useEffect(() => {
-    const doc = new Y.Doc();
-    const m = doc.getMap("windows");
-    m.set("ready", true);
-    return () => doc.destroy();
-  }, []);
+  function byokHeaders(): Record<string, string> {
+    const h: Record<string, string> = {};
+    if (byokProvider && byokKey) {
+      h["x-byok-provider"] = byokProvider;
+      h["x-byok-key"] = byokKey;
+      if (byokModel) h["x-byok-model"] = byokModel;
+      localStorage.setItem("aiduchi.byokProvider", byokProvider);
+      localStorage.setItem("aiduchi.byokKey", byokKey);
+      localStorage.setItem("aiduchi.byokModel", byokModel);
+    }
+    return h;
+  }
 
   async function createRoom() {
     const r = await fetch(`${API}/api/rooms`, {
@@ -44,14 +52,38 @@ export function App() {
     if (!id || !tk) return;
     const list = await fetch(`${API}/api/rooms/${id}/nodes`, { headers: { "x-room-token": tk } }).then((r) => r.json());
     setNodes(list);
+    const ws = await fetch(`${API}/api/rooms/${id}/windows`, { headers: { "x-room-token": tk } }).then((r) => r.json()) as (Win & { minimized: number | boolean })[];
+    if (Array.isArray(ws) && ws.length > 0) {
+      setWins(ws.map((w) => ({ id: w.id, nodeId: w.nodeId, x: w.x, y: w.y, z: w.z, minimized: !!w.minimized })));
+    }
   }
 
+  // 窓配置の共有保存（確定形のみ・デバウンス）
+  useEffect(() => {
+    if (!roomId || !token) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetch(`${API}/api/rooms/${roomId}/windows`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-room-token": token },
+        body: JSON.stringify({ windows: wins }),
+      }).catch(() => {});
+    }, 1500);
+  }, [wins, roomId, token]);
+
   async function send() {
-    const n = await fetch(`${API}/api/rooms/${roomId}/nodes`, {
+    setErr("");
+    const r = await fetch(`${API}/api/rooms/${roomId}/nodes`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-room-token": token },
+      headers: { "Content-Type": "application/json", "x-room-token": token, ...byokHeaders() },
       body: JSON.stringify({ parentId, prompt }),
-    }).then((r) => r.json());
+    });
+    const n = await r.json();
+    if (!r.ok) {
+      setErr(n.error ?? "failed");
+      await refresh();
+      return;
+    }
     setPrompt("");
     await refresh();
     // 送信した窓の対象を新ノードへ
@@ -73,6 +105,13 @@ export function App() {
         <div style={{ marginTop: 8, fontSize: 12 }}>
           room: {roomId || "-"}<br />token: {token ? token.slice(0, 8) + "…" : "-"} <button onClick={() => refresh()}>更新</button>
         </div>
+        <details style={{ marginTop: 8, fontSize: 12 }}>
+          <summary>BYOK（任意・未入力ならホストキー）</summary>
+          <input value={byokProvider} onChange={(e) => setByokProvider(e.target.value)} placeholder="provider (例 openai)" style={{ width: "100%" }} />
+          <input value={byokKey} onChange={(e) => setByokKey(e.target.value)} placeholder="api key" type="password" style={{ width: "100%" }} />
+          <input value={byokModel} onChange={(e) => setByokModel(e.target.value)} placeholder="model" style={{ width: "100%" }} />
+        </details>
+        {err && <div style={{ color: "red", fontSize: 12 }}>{err}</div>}
         <div style={{ marginTop: 12, display: "flex", gap: 4 }}>
           {(["tree", "list", "board"] as const).map((v) => (
             <button key={v} disabled={view === v} onClick={() => setView(v)}>{v}</button>
@@ -92,7 +131,7 @@ export function App() {
               <li key={n.id}>{n.parentId ?? "root"} → {n.id} [{n.status}] {n.prompt.slice(0, 24)}</li>
             ))}</ul>
           )}
-          {view === "board" && ["generating", "review", "adopted", "abandoned"].map((s) => (
+          {view === "board" && ["draft", "generating", "review", "adopted", "abandoned"].map((s) => (
             <div key={s}><b>{s}</b><ul>{nodes.filter((n) => n.status === s).map((n) => <li key={n.id}>{n.id}</li>)}</ul></div>
           ))}
         </div>
