@@ -1,31 +1,31 @@
 # STATUS — 進捗と次の一手（作業のたびに更新）
 
-最終更新：2026-10-08 / gehditor開始
+最終更新：2026-10-08 / video除去コミット
 
-## 済み（P0〜Tunnel公開 + ユーザー名 + gehditor開始）
+## 済み（P0〜Tunnel + ユーザー名 + gehditor分離）
 
-- [x] P0〜Tunnel公開 + ユーザー名設定: これまでの記載通り（`08919fd`まで）
-- [x] **gehditor リポジトリ開始**（https://github.com/Suzukeh/gehditor）
-  - 映像ソフト本体。aiduchiで共同開発する「つくっているソフト」
-  - 初期構成: ProjectJSON / applyPatch / resolveTimeline / Timeline / Preview / Inspector
-  - aiduchiのvideoアダプタで検証した設計を本体に昇華
+- [x] P0〜Tunnel公開 + ユーザー名設定 + gehditor開始: これまでの記載通り（`a4749a3`まで）
+- [x] **video関連をaiduchiから除去**（gehditorへ分離）
+  - `packages/protocol/src/video.ts` 削除
+  - `apps/web/src/adapters/video/` 全削除
+  - server・App.tsxからvideo分岐・UI・adapterKind選択を除去
+  - protocolの `CreateRoom.adapterKind` は `"code"` のみ
+  - **今後、映像編集機能はgehditorリポジトリに実装する**
 
-## 開発フロー（aiduchi ↔ gehditor）
+## 役割分担（明確化）
 
-1. **gehditorに機能を足す**（Timeline、キーフレーム、エフェクト、export等）
-2. その過程で **aiduchiの不足に気付く**（AI語彙、共同編集、UI等）
-3. **aiduchiを改善**し、次の機能開発でまた使う
-4. 例：gehditorにキーフレームUIが要る→aiduchiのvideoアダプタのpatch stepsに `setKeyframe` 追加→両方改善
+- **aiduchi** = 共同バイブコーディング基盤（汎用・codeアダプタ・同期・AI）
+- **gehditor** = 映像編集ソフト本体（https://github.com/Suzukeh/gehditor）
+- 映像機能はgehditorに実装し、aiduchiの改善（AI語彙・同期等）はgehditor開発で必要になったものだけ行う
 
 ## 未検証・既知のTODO
 
-- [ ] gehditor: キーフレーム、実アセット、export（WebCodecs）、Undo/Redo
 - [ ] aiduchi: codeアダプタのY.Text＋Monaco
 - [ ] aiduchi: Cloudflare Access（身内限定化）
-- [ ] Timelineのドラッグ・トリム操作（Playwrightセレクタ不安定のため保留）
+- [ ] gehditor: キーフレーム、実アセット、export、Undo/Redo
 
 ## 次の一手候補（優先順）
 
-1. gehditor: キーフレームシステム（ProjectJSON拡張＋Timeline UI）
-2. gehditor: export（WebCodecs、aiduchiの実装を移植）
+1. gehditor: キーフレームシステム
+2. gehditor: export（WebCodecs）
 3. aiduchi: codeアダプタのY.Text＋Monaco

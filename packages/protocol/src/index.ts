@@ -48,11 +48,10 @@ export type WindowState = z.infer<typeof WindowState>;
 // ---- API ----
 export const CreateRoom = z.object({
   name: z.string().min(1).max(100),
-  adapterKind: z.enum(["code", "video"]).default("code"),
+  adapterKind: z.enum(["code"]).default("code"),
 });
 export const CreateNode = z.object({
   parentId: z.string().nullable(),
   prompt: z.string().min(1).max(5000),
 });
 
-export * from "./video.js";

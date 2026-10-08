@@ -62,21 +62,6 @@ function chatHeaders(creds: Creds, session: string): Record<string, string> {
 
 const CODE_PATCH_SYSTEM = `You are a code editing agent. Output ONLY a JSON object: {"steps":[{"op":"upsertFile","path":"...","content":"..."}|{"op":"deleteFile","path":"..."}]}. Max 20 steps. Keep edits minimal and consistent with the existing files. No markdown fences, no commentary.`;
 
-const VIDEO_PATCH_SYSTEM = `You are a video editing agent. Output ONLY a JSON object: {"steps":[...]}. Available operations (max 20 steps):
-- {"op":"addClip","trackId":"v1","startFrame":0,"durationFrames":60,"color":"#4a90d9"}
-- {"op":"addText","trackId":"t1","startFrame":0,"durationFrames":60,"text":"Hello"}
-- {"op":"trimItem","itemId":"...","startFrame":0,"durationFrames":30}
-- {"op":"moveItem","itemId":"...","trackId":"v2","startFrame":60}
-- {"op":"setProp","itemId":"...","prop":"text"|"color"|"opacity","value":...}
-- {"op":"removeItem","itemId":"..."}
-- {"op":"addTrack","kind":"video"|"audio"|"text","name":"V3"}
-- {"op":"removeTrack","trackId":"..."}
-Frames are integers. fps=30. No markdown fences, no commentary.`;
-
-function systemForKind(kind: string): string {
-  return kind === "video" ? VIDEO_PATCH_SYSTEM : CODE_PATCH_SYSTEM;
-}
-
 /** モデル出力のコードフェンス等を剥がしてJSONを取り出す */
 function extractJson(text: string): unknown {
   let t = text.trim();
@@ -93,11 +78,10 @@ export async function generatePatch(
   prompt: string,
   context: unknown,
   session: string,
-  kind: "code" | "video" = "code",
 ): Promise<{ patch: { steps: unknown[] }; promptTokens: number; completionTokens: number }> {
   const contextStr = typeof context === "string" ? context : JSON.stringify(context, null, 1).slice(0, 8000);
   const messages = [
-    { role: "system", content: systemForKind(kind) },
+    { role: "system", content: CODE_PATCH_SYSTEM },
     { role: "user", content: `Request: ${prompt}\n\nCurrent state:\n${contextStr || "(empty)"}` },
   ];
   const body = {

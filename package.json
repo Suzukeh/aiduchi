@@ -16,8 +16,7 @@
     "test:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@hocuspocus/provider": "^4.7.0",
-    "mp4-muxer": "^5.2.2"
+    "@hocuspocus/provider": "^4.7.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0"
