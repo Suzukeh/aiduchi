@@ -13,10 +13,18 @@ export function App() {
   const showTree = useStore((s) => s.showTree);
   const openWindow = useStore((s) => s.openWindow);
   const setShowTree = useStore((s) => s.setShowTree);
+  const refreshNodes = useStore((s) => s.refreshNodes);
 
   useEffect(() => {
     init();
   }, [init]);
+
+  // 他ユーザーのノード追加を自動反映（5秒ポーリング）
+  useEffect(() => {
+    if (!roomId) return;
+    const t = setInterval(() => refreshNodes(), 5000);
+    return () => clearInterval(t);
+  }, [roomId, refreshNodes]);
 
   return (
     <div className="flex h-full">
