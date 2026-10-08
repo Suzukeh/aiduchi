@@ -34,6 +34,18 @@ function latestFiles(roomId: string): Record<string, string> {
   return snap?.files ?? {};
 }
 
+/** 指定ノードのスナップショットのファイル群（分岐の基点に使う） */
+function filesOfNode(roomId: string, nodeId: string | null): Record<string, string> {
+  const target = nodeId ?? "root";
+  const row = db.prepare(`SELECT data FROM snapshots WHERE roomId = ? AND nodeId = ?`).get(roomId, target) as { data: string } | undefined;
+  if (!row) return {};
+  try {
+    return (JSON.parse(row.data) as { files?: Record<string, string> }).files ?? {};
+  } catch {
+    return {};
+  }
+}
+
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 app.post("/api/rooms", (req, res) => {
@@ -141,7 +153,9 @@ app.post("/api/rooms/:id/nodes", async (req, res) => {
     let steps: unknown[];
     let pt = 0, ct = 0;
     let provider = "dummy", model = "dummy-0.1";
-    const ctx = latestFiles(room.id);
+    // 分岐の基点は「親ノードのスナップショット」（rootなら初期状態）
+    const baseFiles = filesOfNode(room.id, parsed.data.parentId);
+    const ctx = baseFiles;
     if (!creds) {
       steps = dummyPatch(parsed.data.prompt, nodeId, provider, model).steps;
     } else {
@@ -155,7 +169,7 @@ app.post("/api/rooms/:id/nodes", async (req, res) => {
 
     const validated = CodePatch.safeParse({ steps });
     if (!validated.success) throw new Error("invalid code patch: " + validated.error.message.slice(0, 120));
-    const nextFiles = { ...latestFiles(room.id) };
+    const nextFiles = { ...baseFiles };
     const touched: string[] = [];
     for (const s of validated.data.steps) {
       if (s.op === "upsertFile") { nextFiles[s.path] = s.content; touched.push("+" + s.path); }
