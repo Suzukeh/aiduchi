@@ -34,6 +34,7 @@ export function App() {
   const [byokModel, setByokModel] = useState(() => localStorage.getItem("aiduchi.byokModel") ?? "");
   const syncRef = useRef<SyncState | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
 
   function byokHeaders(): Record<string, string> {
     const h: Record<string, string> = {};
@@ -218,12 +219,28 @@ export function App() {
           ))}
         </div>
       </aside>
-      <main style={{ flex: 1, position: "relative", background: "#fafafa" }}>
+      <main style={{ flex: 1, position: "relative", background: "#fafafa", overflow: "hidden" }}
+        onMouseMove={(e) => {
+          const d = dragRef.current;
+          if (!d) return;
+          const mainRect = e.currentTarget.getBoundingClientRect();
+          const nx = e.clientX - mainRect.left - d.offsetX;
+          const ny = e.clientY - mainRect.top - d.offsetY - 60;
+          setWins((ws) => ws.map((w) => w.id === d.id ? { ...w, x: Math.max(0, nx), y: Math.max(0, ny) } : w));
+        }}
+        onMouseUp={() => { dragRef.current = null; }}
+        onMouseLeave={() => { dragRef.current = null; }}>
         <div style={{ padding: 12 }}>中央プレビュー（codeアダプタ予定地） parent={parentId ?? "root"} <button onClick={addWindow}>窓を追加</button></div>
         {wins.filter((w) => !w.minimized).map((w) => (
           <div key={w.id} style={{ position: "absolute", left: w.x, top: 60 + w.y, width: 340, background: "#fff", border: "1px solid #999", zIndex: w.z }}
             onMouseDown={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, z: Math.max(...ws.map((y) => y.z)) + 1 } : x))}>
-            <div style={{ background: "#eee", padding: 4, display: "flex", justifyContent: "space-between", cursor: "move" }}>
+            <div style={{ background: "#eee", padding: 4, display: "flex", justifyContent: "space-between", cursor: "move" }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                const rect = e.currentTarget.parentElement!.getBoundingClientRect();
+                dragRef.current = { id: w.id, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
+                setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, z: Math.max(...ws.map((y) => y.z)) + 1 } : x));
+              }}>
               <span>{w.id} → {w.nodeId}</span>
               <span>
                 <button onClick={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, minimized: true } : x))}>最小化</button>
