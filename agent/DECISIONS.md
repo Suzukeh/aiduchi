@@ -1,5 +1,6 @@
 # DECISIONS — 決定ログ（新しいものほど上）
 
+- D19 (2026-10-08): gehditor（映像ソフト本体）を別リポジトリで開発。aiduchiは開発基盤としてgehditor開発を通じて改善する相互関係。
 - D18 (2026-10-08): Tunnel公開は Vite :5173 単一入口（/api, /sync をプロキシ）。Web/API URLは相対パス化で同一オリジン動作。
 - D17 (2026-10-08): Playwright（Chromium headless）でMP4出力を検証可能に。H.264はLevel 4.0（1080p対応）を使用。
 - D16 (2026-10-08): exportはWebCodecs + mp4-muxer（H.264）。描画はrenderSceneToContext純粋関数をPreview/export共有でゼロドリフト。

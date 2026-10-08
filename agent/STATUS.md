@@ -1,30 +1,31 @@
 # STATUS — 進捗と次の一手（作業のたびに更新）
 
-最終更新：2026-10-08 / Tunnel公開コミット
+最終更新：2026-10-08 / gehditor開始
 
-## 済み（P0〜export + 検証 + Tunnel公開）
+## 済み（P0〜Tunnel公開 + ユーザー名 + gehditor開始）
 
-- [x] P0〜Playwright検証: これまでの記載通り（`65a9247`まで）
-- [x] **Cloudflare Named Tunnel公開**
-  - tunnel: `aiduchi-dev` (25a98e0b-dcb2-41dd-a07a-b60a77eec9cd)
-  - ホスト名: `vtest.suzuke.dev` → Vite :5173（/api, /sync プロキシ経由）
-  - Vite proxy設定追加（/api→:3000, /sync→ws://:1234）
-  - Web/API URLを相対パス化（同一オリジン→プロキシ経由）
-  - 検証: 外部から `https://vtest.suzuke.dev` でWeb 200応答、API room作成成功
-  - 起動手順: `node server/dist/sync.js` → `node server/dist/index.js` →
-    `npm --prefix apps/web run dev` → `cloudflared tunnel --config ~/.cloudflared/aiduchi.yml run`
+- [x] P0〜Tunnel公開 + ユーザー名設定: これまでの記載通り（`08919fd`まで）
+- [x] **gehditor リポジトリ開始**（https://github.com/Suzukeh/gehditor）
+  - 映像ソフト本体。aiduchiで共同開発する「つくっているソフト」
+  - 初期構成: ProjectJSON / applyPatch / resolveTimeline / Timeline / Preview / Inspector
+  - aiduchiのvideoアダプタで検証した設計を本体に昇華
+
+## 開発フロー（aiduchi ↔ gehditor）
+
+1. **gehditorに機能を足す**（Timeline、キーフレーム、エフェクト、export等）
+2. その過程で **aiduchiの不足に気付く**（AI語彙、共同編集、UI等）
+3. **aiduchiを改善**し、次の機能開発でまた使う
+4. 例：gehditorにキーフレームUIが要る→aiduchiのvideoアダプタのpatch stepsに `setKeyframe` 追加→両方改善
 
 ## 未検証・既知のTODO
 
-- [ ] 実アセット（画像・動画ファイル）の取り込み
-- [ ] codeアダプタのY.Textファイル編集＋Monaco
-- [ ] Cloudflare Access（身内限定化）は未設定
+- [ ] gehditor: キーフレーム、実アセット、export（WebCodecs）、Undo/Redo
+- [ ] aiduchi: codeアダプタのY.Text＋Monaco
+- [ ] aiduchi: Cloudflare Access（身内限定化）
 - [ ] Timelineのドラッグ・トリム操作（Playwrightセレクタ不安定のため保留）
-- [ ] `lib0`モジュール初期化時の非致命的エラー（同期自体は正常）
-- [ ] docker composeの実起動検証（作業機にdockerなし）
 
 ## 次の一手候補（優先順）
 
-1. codeアダプタのY.Text＋Monaco
-2. 実アセット取り込み（画像・動画→assets）
-3. Cloudflare Access設定（身内限定化）
+1. gehditor: キーフレームシステム（ProjectJSON拡張＋Timeline UI）
+2. gehditor: export（WebCodecs、aiduchiの実装を移植）
+3. aiduchi: codeアダプタのY.Text＋Monaco
