@@ -1,5 +1,6 @@
 # DECISIONS — 決定ログ（新しいものほど上）
 
+- D15 (2026-10-08): videoアダプタのProjectJSONはprotocolに集約（サーバー・Web共有）。patch stepsはtyped（8種）に限定し、AI語彙=Inspector操作のみ。
 - D14 (2026-10-08): Yjsクライアントは`@hocuspocus/provider`採用（y-websocketはHocuspocus認証プロトコル非対応のため）。
 - D13 (2026-10-08): baseUrlは `/chat/completions` 付きでも正規化して叩く。x-opencode-sessionはroom単位の安定IDを自動送信。response_format非送信で互換性優先。
 - D12 (2026-10-08): `agent/`引き継ぎmdを常設し、作業のたびにSTATUS更新を義務化。

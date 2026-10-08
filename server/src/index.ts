@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { randomUUID, createHash } from "node:crypto";
-import { CreateRoom, CreateNode, CodePatch } from "@aiduchi/protocol";
+import { CreateRoom, CreateNode, CodePatch, VideoPatch, applyVideoPatch, videoDiffSummary, emptyVideoProject, type VideoProject } from "@aiduchi/protocol";
 import { db, monthUsage, type RoomRow, type NodeRow } from "./db.js";
 import { resolveCreds, generatePatch, dummyPatch, streamChat } from "./ai.js";
 
@@ -23,14 +23,21 @@ function publicNode(n: NodeRow) {
   return { ...n, promptTokens: undefined, completionTokens: undefined };
 }
 
-function latestFiles(roomId: string): Record<string, string> {
+function latestSnapshot(roomId: string): unknown {
   const row = db.prepare(`SELECT data FROM snapshots WHERE roomId = ? ORDER BY createdAt DESC LIMIT 1`).get(roomId) as { data: string } | undefined;
-  if (!row) return {};
-  try {
-    return (JSON.parse(row.data) as { files: Record<string, string> }).files ?? {};
-  } catch {
-    return {};
-  }
+  if (!row) return null;
+  try { return JSON.parse(row.data); } catch { return null; }
+}
+
+function latestFiles(roomId: string): Record<string, string> {
+  const snap = latestSnapshot(roomId) as { files?: Record<string, string> } | null;
+  return snap?.files ?? {};
+}
+
+function latestVideoProject(roomId: string): VideoProject {
+  const snap = latestSnapshot(roomId) as VideoProject | null;
+  if (snap && Array.isArray(snap.tracks)) return snap;
+  return emptyVideoProject();
 }
 
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
@@ -43,8 +50,11 @@ app.post("/api/rooms", (req, res) => {
   const adminToken = randomUUID();
   db.prepare(`INSERT INTO rooms (id, name, adapterKind, joinToken, adminTokenHash, createdAt) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(id, parsed.data.name, parsed.data.adapterKind, joinToken, hash(adminToken), now());
+  const initialData = parsed.data.adapterKind === "video"
+    ? JSON.stringify(emptyVideoProject())
+    : JSON.stringify({ files: { "README.md": `# ${parsed.data.name}\n` } });
   db.prepare(`INSERT INTO snapshots (id, roomId, nodeId, data, createdAt) VALUES (?, ?, 'root', ?, ?)`)
-    .run(randomUUID(), id, JSON.stringify({ files: { "README.md": `# ${parsed.data.name}\n` } }), now());
+    .run(randomUUID(), id, initialData, now());
   res.json({ id, joinToken, adminToken });
 });
 
@@ -107,32 +117,51 @@ app.post("/api/rooms/:id/nodes", async (req, res) => {
       }
     }
 
-    let steps: { op: string; path: string; content?: string }[];
+    const isVideo = room.adapterKind === "video";
+    let steps: unknown[];
     let pt = 0, ct = 0;
     let provider = "dummy", model = "dummy-0.1";
+    const ctx = isVideo ? latestVideoProject(room.id) : latestFiles(room.id);
     if (!creds) {
-      steps = dummyPatch(parsed.data.prompt, nodeId, provider, model).steps as typeof steps;
+      if (isVideo) {
+        steps = [{ op: "addClip", trackId: "v1", startFrame: 0, durationFrames: 60, color: "#4a90d9" }];
+      } else {
+        steps = dummyPatch(parsed.data.prompt, nodeId, provider, model).steps;
+      }
     } else {
       provider = creds.provider; model = creds.model;
-      const out = await generatePatch(creds, parsed.data.prompt, latestFiles(room.id), `aiduchi-${room.id}`);
-      steps = out.patch.steps as typeof steps;
+      const out = await generatePatch(creds, parsed.data.prompt, ctx, `aiduchi-${room.id}`, isVideo ? "video" : "code");
+      steps = out.patch.steps;
       pt = out.promptTokens; ct = out.completionTokens;
       db.prepare(`INSERT INTO ai_usage (roomId, nodeId, provider, model, promptTokens, completionTokens, byok, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(room.id, nodeId, provider, model, pt, ct, creds.byok ? 1 : 0, now());
     }
 
-    const validated = CodePatch.safeParse({ steps });
-    if (!validated.success) throw new Error("invalid patch");
-    const nextFiles = { ...latestFiles(room.id) };
-    const touched: string[] = [];
-    for (const s of validated.data.steps) {
-      if (s.op === "upsertFile") { nextFiles[s.path] = s.content; touched.push("+" + s.path); }
-      else { delete nextFiles[s.path]; touched.push("-" + s.path); }
+    let diffSummary: string;
+    let nextData: string;
+    if (isVideo) {
+      const validated = VideoPatch.safeParse({ steps });
+      if (!validated.success) throw new Error("invalid video patch: " + validated.error.message.slice(0, 120));
+      const before = latestVideoProject(room.id);
+      const after = applyVideoPatch(before, validated.data);
+      diffSummary = videoDiffSummary(before, after);
+      nextData = JSON.stringify(after);
+    } else {
+      const validated = CodePatch.safeParse({ steps });
+      if (!validated.success) throw new Error("invalid code patch: " + validated.error.message.slice(0, 120));
+      const nextFiles = { ...latestFiles(room.id) };
+      const touched: string[] = [];
+      for (const s of validated.data.steps) {
+        if (s.op === "upsertFile") { nextFiles[s.path] = s.content; touched.push("+" + s.path); }
+        else { delete nextFiles[s.path]; touched.push("-" + s.path); }
+      }
+      diffSummary = touched.join(", ").slice(0, 500) || "no change";
+      nextData = JSON.stringify({ files: nextFiles });
     }
     db.prepare(`INSERT INTO snapshots (id, roomId, nodeId, data, createdAt) VALUES (?, ?, ?, ?, ?)`)
-      .run(randomUUID(), room.id, nodeId, JSON.stringify({ files: nextFiles }), now());
+      .run(randomUUID(), room.id, nodeId, nextData, now());
     db.prepare(`UPDATE nodes SET status = 'review', provider = ?, model = ?, promptTokens = ?, completionTokens = ?, diffSummary = ? WHERE id = ?`)
-      .run(provider, model, pt, ct, touched.join(", ").slice(0, 500), nodeId);
+      .run(provider, model, pt, ct, diffSummary, nodeId);
     const node = db.prepare(`SELECT * FROM nodes WHERE id = ?`).get(nodeId) as NodeRow;
     res.json(publicNode(node));
   } catch (e) {

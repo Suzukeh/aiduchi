@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { connectRoom, getPeers, type SyncState, type AwarenessUser } from "./sync";
+import { VideoEditor } from "./adapters/video/VideoEditor";
+import { emptyVideoProject, type VideoProject, type VideoPatch } from "@aiduchi/protocol";
 
 type Node = {
   id: string; parentId: string | null; prompt: string; status: string;
@@ -18,6 +20,10 @@ export function App() {
   const [roomId, setRoomId] = useState("");
   const [token, setToken] = useState("");
   const [roomName, setRoomName] = useState("demo");
+  const [roomKind, setRoomKind] = useState<"code" | "video">("code");
+  const [adapterKind, setAdapterKind] = useState<"code" | "video">("code");
+  const [videoProject, setVideoProject] = useState<VideoProject | null>(null);
+  const [aiPatch, setAiPatch] = useState<VideoPatch | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [view, setView] = useState<"tree" | "list" | "board">("tree");
   const [wins, setWins] = useState<Win[]>(DEFAULT_WINS);
@@ -112,10 +118,17 @@ export function App() {
   async function createRoom() {
     const r = await fetch(`${API}/api/rooms`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: roomName, adapterKind: "code" }),
+      body: JSON.stringify({ name: roomName, adapterKind: roomKind }),
     }).then((r) => r.json());
-    setRoomId(r.id); setToken(r.joinToken);
+    setRoomId(r.id); setToken(r.joinToken); setAdapterKind(roomKind);
     await refresh(r.id, r.joinToken);
+    if (roomKind === "video") loadVideoProject(r.id, r.joinToken);
+  }
+
+  async function loadVideoProject(id = roomId, tk = token) {
+    const snap = await fetch(`${API}/api/rooms/${id}/snapshots/root`, { headers: { "x-room-token": tk } }).then((r) => r.json());
+    if (snap && Array.isArray(snap.tracks)) setVideoProject(snap as VideoProject);
+    else setVideoProject(emptyVideoProject());
   }
 
   async function refresh(id = roomId, tk = token) {
@@ -139,6 +152,11 @@ export function App() {
     }
     setPrompt("");
     await refresh();
+    if (adapterKind === "video") {
+      // サーバーがAI patchを適用した最新スナップショットを読み込む
+      const snap = await fetch(`${API}/api/rooms/${roomId}/snapshots/${n.id}`, { headers: { "x-room-token": token } }).then((r) => r.json());
+      if (snap && Array.isArray(snap.tracks)) setVideoProject(snap as VideoProject);
+    }
     setWins((ws) => ws.map((w, i) => (i === 0 ? { ...w, nodeId: n.id } : w)));
   }
 
@@ -153,7 +171,11 @@ export function App() {
       <aside style={{ width: 300, borderRight: "1px solid #ddd", padding: 12, overflow: "auto" }}>
         <h2>aiduchi</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <input value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="room name" />
+          <input value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="room name" style={{ flex: 1 }} />
+          <select value={roomKind} onChange={(e) => setRoomKind(e.target.value as "code" | "video")} style={{ width: 70 }}>
+            <option value="code">code</option>
+            <option value="video">video</option>
+          </select>
           <button onClick={createRoom}>作成</button>
         </div>
         <div style={{ marginTop: 8, fontSize: 12 }}>
@@ -202,7 +224,22 @@ export function App() {
         </div>
       </aside>
       <main style={{ flex: 1, position: "relative", background: "#fafafa" }}>
-        <div style={{ padding: 12 }}>中央プレビュー（codeアダプタ予定地） parent={parentId ?? "root"} <button onClick={addWindow}>窓を追加</button></div>
+        {adapterKind === "video" ? (
+          <div style={{ padding: 8, height: "calc(100% - 48px)", display: "flex", flexDirection: "column" }}>
+            <div style={{ marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>video editor parent={parentId ?? "root"}</span>
+              <button onClick={addWindow}>窓を追加</button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              {videoProject && (
+                <VideoEditor initialProject={videoProject} aiPatch={aiPatch}
+                  onProjectChange={(p) => setVideoProject(p)} />
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: 12 }}>中央プレビュー（codeアダプタ予定地） parent={parentId ?? "root"} <button onClick={addWindow}>窓を追加</button></div>
+        )}
         {wins.filter((w) => !w.minimized).map((w) => (
           <div key={w.id} style={{ position: "absolute", left: w.x, top: 60 + w.y, width: 340, background: "#fff", border: "1px solid #999", zIndex: w.z }}
             onMouseDown={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, z: Math.max(...ws.map((y) => y.z)) + 1 } : x))}>

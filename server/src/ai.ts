@@ -1,5 +1,4 @@
 import type express from "express";
-import { CodePatch } from "@aiduchi/protocol";
 
 export type Creds = {
   provider: string;
@@ -61,7 +60,22 @@ function chatHeaders(creds: Creds, session: string): Record<string, string> {
   };
 }
 
-const PATCH_SYSTEM = `You are a code editing agent. Output ONLY a JSON object: {"steps":[{"op":"upsertFile","path":"...","content":"..."}|{"op":"deleteFile","path":"..."}]}. Max 20 steps. Keep edits minimal and consistent with the existing files. No markdown fences, no commentary.`;
+const CODE_PATCH_SYSTEM = `You are a code editing agent. Output ONLY a JSON object: {"steps":[{"op":"upsertFile","path":"...","content":"..."}|{"op":"deleteFile","path":"..."}]}. Max 20 steps. Keep edits minimal and consistent with the existing files. No markdown fences, no commentary.`;
+
+const VIDEO_PATCH_SYSTEM = `You are a video editing agent. Output ONLY a JSON object: {"steps":[...]}. Available operations (max 20 steps):
+- {"op":"addClip","trackId":"v1","startFrame":0,"durationFrames":60,"color":"#4a90d9"}
+- {"op":"addText","trackId":"t1","startFrame":0,"durationFrames":60,"text":"Hello"}
+- {"op":"trimItem","itemId":"...","startFrame":0,"durationFrames":30}
+- {"op":"moveItem","itemId":"...","trackId":"v2","startFrame":60}
+- {"op":"setProp","itemId":"...","prop":"text"|"color"|"opacity","value":...}
+- {"op":"removeItem","itemId":"..."}
+- {"op":"addTrack","kind":"video"|"audio"|"text","name":"V3"}
+- {"op":"removeTrack","trackId":"..."}
+Frames are integers. fps=30. No markdown fences, no commentary.`;
+
+function systemForKind(kind: string): string {
+  return kind === "video" ? VIDEO_PATCH_SYSTEM : CODE_PATCH_SYSTEM;
+}
 
 /** モデル出力のコードフェンス等を剥がしてJSONを取り出す */
 function extractJson(text: string): unknown {
@@ -77,15 +91,14 @@ function extractJson(text: string): unknown {
 export async function generatePatch(
   creds: Creds,
   prompt: string,
-  files: Record<string, string>,
+  context: unknown,
   session: string,
-): Promise<{ patch: { steps: { op: "upsertFile"; path: string; content: string }[] | { op: "deleteFile"; path: string }[] }; promptTokens: number; completionTokens: number }> {
-  const fileList = Object.entries(files)
-    .map(([p, c]) => `--- ${p} ---\n${c.slice(0, 4000)}`)
-    .join("\n");
+  kind: "code" | "video" = "code",
+): Promise<{ patch: { steps: unknown[] }; promptTokens: number; completionTokens: number }> {
+  const contextStr = typeof context === "string" ? context : JSON.stringify(context, null, 1).slice(0, 8000);
   const messages = [
-    { role: "system", content: PATCH_SYSTEM },
-    { role: "user", content: `Request: ${prompt}\n\nCurrent files:\n${fileList || "(empty)"}` },
+    { role: "system", content: systemForKind(kind) },
+    { role: "user", content: `Request: ${prompt}\n\nCurrent state:\n${contextStr || "(empty)"}` },
   ];
   const body = {
     model: creds.model,
@@ -108,11 +121,10 @@ export async function generatePatch(
     choices: { message: { content: string } }[];
     usage?: { prompt_tokens: number; completion_tokens: number };
   };
-  const parsed = CodePatch.safeParse(extractJson(data.choices[0]?.message?.content ?? "{}"));
-  if (!parsed.success) throw new Error(`invalid patch JSON: ${parsed.error.message.slice(0, 120)}`);
+  const raw = extractJson(data.choices[0]?.message?.content ?? "{}") as { steps?: unknown[] };
+  if (!Array.isArray(raw.steps)) throw new Error("invalid patch: no steps array");
   return {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    patch: parsed.data as any,
+    patch: { steps: raw.steps },
     promptTokens: data.usage?.prompt_tokens ?? 0,
     completionTokens: data.usage?.completion_tokens ?? 0,
   };
