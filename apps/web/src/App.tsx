@@ -23,6 +23,7 @@ export function App() {
   const [view, setView] = useState<"tree" | "list" | "board">("tree");
   const [wins, setWins] = useState<Win[]>(DEFAULT_WINS);
   const [prompt, setPrompt] = useState("");
+  const [activeWinId, setActiveWinId] = useState<string>("w1");
   const [parentId, setParentId] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [peers, setPeers] = useState<AwarenessUser[]>([]);
@@ -245,9 +246,13 @@ export function App() {
                 <button onClick={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, minimized: true } : x))}>最小化</button>
               </span>
             </div>
-            <div style={{ padding: 8 }} onMouseDown={(e) => e.stopPropagation()}>
-              <textarea value={w.id === wins[0]?.id ? prompt : ""} onChange={(e) => setPrompt(e.target.value)} rows={3} style={{ width: "100%" }} placeholder="この窓からチャット送信（先頭窓のみ有効・P0簡易）" />
-              <button onClick={send} disabled={!roomId || !prompt}>送信＝子ノード作成</button>
+            <div style={{ padding: 8 }} onMouseDown={(e) => { e.stopPropagation(); setActiveWinId(w.id); }}>
+              <textarea
+                value={w.id === activeWinId ? prompt : ""}
+                onChange={(e) => { setActiveWinId(w.id); setPrompt(e.target.value); }}
+                onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && prompt && roomId) { e.preventDefault(); send(); } }}
+                rows={3} style={{ width: "100%" }} placeholder="この窓からチャット送信（Ctrl+Enterで送信）" />
+              <button onClick={send} disabled={!roomId || !prompt.trim()}>送信＝子ノード作成</button>
             </div>
           </div>
         ))}
