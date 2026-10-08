@@ -39,7 +39,7 @@ export async function exportVideo(
     error: (e) => { encoderError = e as Error; },
   });
   encoder.configure({
-    codec: "avc1.42001f", // H.264 Baseline Level 3.1
+    codec: "avc1.420028", // H.264 Baseline Level 4.0 (1080p対応)
     width, height,
     bitrate: 5_000_000,
     framerate: fps,
