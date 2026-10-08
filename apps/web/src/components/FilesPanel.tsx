@@ -5,7 +5,9 @@ import { markdown } from "@codemirror/lang-markdown";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { useStore } from "../store";
+import { yCollab } from "y-codemirror.next";
+import * as Y from "yjs";
+import { useStore, getYDoc, getYFiles, getYAwareness } from "../store";
 import * as api from "../api";
 
 type Files = Record<string, string>;
@@ -29,8 +31,40 @@ export function FilesPanel({ nodeId }: { nodeId: string }) {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState("");
+  const [ytext, setYtext] = useState<Y.Text | null>(null);
+  const [tick, forceRender] = useState(0);
 
-  const dirty = Object.keys(edits).some((k) => edits[k] !== (files?.[k] ?? undefined));
+  // 共同編集用: 選択ファイルのY.Textを取得（無ければ作ってスナップショット内容で初期化）
+  useEffect(() => {
+    if (!editing || !selected || !files) { setYtext(null); return; }
+    const yfiles = getYFiles();
+    const d = getYDoc();
+    if (!yfiles || !d) { setYtext(null); return; }
+    let t = yfiles.get(selected);
+    if (!t) {
+      t = new Y.Text();
+      yfiles.set(selected, t);
+    }
+    if (t.length === 0 && (files[selected] ?? "") !== "") {
+      d.transact(() => { t!.insert(0, files[selected] ?? ""); }, "init");
+    }
+    setYtext(t);
+    const update = () => forceRender((n) => n + 1);
+    t.observe(update);
+    return () => t!.unobserve(update);
+  }, [editing, selected, files]);
+
+  // ytext/tickが変わるたびに再計算（useMemoだとY.Text内部変更を検知できない）
+  void tick;
+  const currentContent = ytext
+    ? ytext.toString()
+    : selected
+      ? (edits[selected] ?? files?.[selected] ?? "")
+      : "";
+
+  const dirty = selected
+    ? currentContent !== (files?.[selected] ?? "")
+    : Object.keys(edits).some((k) => edits[k] !== files?.[k]);
 
   async function load() {
     if (!roomId || !token) return;
@@ -62,6 +96,7 @@ export function FilesPanel({ nodeId }: { nodeId: string }) {
     setError("");
     try {
       const next: Files = { ...files, ...edits };
+      if (selected) next[selected] = currentContent;
       await api.saveSnapshot(roomId, token, nodeId, next, `手動編集: ${selected ?? ""}`, userName);
       await refreshNodes();
       await load();
@@ -86,8 +121,6 @@ export function FilesPanel({ nodeId }: { nodeId: string }) {
   if (!files || Object.keys(files).length === 0) {
     return <div className="p-3 text-xs text-gray-500">ファイルがありません</div>;
   }
-
-  const currentContent = selected ? (edits[selected] ?? files[selected] ?? "") : "";
 
   return (
     <div className="flex h-full flex-col">
@@ -143,14 +176,23 @@ export function FilesPanel({ nodeId }: { nodeId: string }) {
               </div>
               {editing ? (
                 <div className="min-h-0 flex-1 overflow-auto text-[11px]">
-                  <CodeMirror
-                    value={currentContent}
-                    theme={oneDark}
-                    extensions={langFor(selected)}
-                    onChange={(v) => setEdits((prev) => ({ ...prev, [selected]: v }))}
-                    basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}
-                    style={{ height: "100%" }}
-                  />
+                  {ytext ? (
+                    <CodeMirror
+                      theme={oneDark}
+                      extensions={[...langFor(selected), yCollab(ytext, getYAwareness() ?? undefined)]}
+                      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}
+                      style={{ height: "100%" }}
+                    />
+                  ) : (
+                    <CodeMirror
+                      value={currentContent}
+                      theme={oneDark}
+                      extensions={langFor(selected)}
+                      onChange={(v) => setEdits((prev) => ({ ...prev, [selected]: v }))}
+                      basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}
+                      style={{ height: "100%" }}
+                    />
+                  )}
                 </div>
               ) : (
                 <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-gray-300">{currentContent}</pre>

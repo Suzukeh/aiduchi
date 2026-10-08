@@ -82,6 +82,20 @@ let doc: Y.Doc | null = null;
 let windowsMap: Y.Map<Win> | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** ファイル共同編集などで使うY.Doc参照（未接続時はnull） */
+export function getYDoc(): Y.Doc | null {
+  return doc;
+}
+/** ファイル内容の共有マップ（path -> Y.Text）を取得。無ければ作る */
+export function getYFiles(): Y.Map<Y.Text> | null {
+  if (!doc) return null;
+  return doc.getMap<Y.Text>("files");
+}
+/** リモートカーソル表示用のawareness（未接続時はnull） */
+export function getYAwareness() {
+  return provider?.awareness ?? null;
+}
+
 function writeWindowsToY(next: Win[]) {
   const d = doc;
   const map = windowsMap;
