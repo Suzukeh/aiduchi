@@ -16,7 +16,13 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "env VITE_API_URL=http://localhost:5181 npm --prefix apps/web run dev -- --port 5180 --strictPort",
+      command: "node tests/helpers/start-sync.cjs",
+      port: 5182,
+      reuseExistingServer: true,
+      timeout: 30_000,
+    },
+    {
+      command: "env VITE_API_URL=http://localhost:5181 SYNC_PROXY_TARGET=ws://localhost:5182 npm --prefix apps/web run dev -- --port 5180 --strictPort",
       port: 5180,
       reuseExistingServer: true,
       timeout: 60_000,

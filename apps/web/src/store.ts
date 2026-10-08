@@ -314,10 +314,9 @@ export const useStore = create<State>((set, get) => ({
               id: w.id, nodeId: w.nodeId, x: w.x, y: w.y, w: w.w, h: w.h, z: w.z, minimized: !!w.minimized,
             }));
             writeWindowsToY(wins);
-          } else {
-            writeWindowsToY(defaultWindows());
           }
-        }).catch(() => writeWindowsToY(defaultWindows()));
+          // 何もなければ空のまま（ユーザーが「新しい窓」で開始）
+        }).catch(() => undefined);
       }
     });
     provider.on("status", (e: { status: string }) => set({ synced: e.status === "connected" }));
@@ -343,10 +342,3 @@ export const useStore = create<State>((set, get) => ({
     set({ synced: false, peers: [], windows: [] });
   },
 }));
-
-function defaultWindows(): Win[] {
-  return [
-    { id: "w1", nodeId: "root", x: 40, y: 30, w: 400, h: 340, z: 1, minimized: false },
-    { id: "w2", nodeId: "root", x: 460, y: 60, w: 400, h: 340, z: 2, minimized: false },
-  ];
-}
