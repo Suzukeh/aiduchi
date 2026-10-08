@@ -9,7 +9,8 @@ import { encodeStateAsUpdate, applyUpdate } from "yjs";
 const dir = process.env.DATA_DIR ?? "./data";
 mkdirSync(dir, { recursive: true });
 const db = new DatabaseSync(join(dir, "aiduchi.db"));
-db.exec(`PRAGMA journal_mode = WAL`);
+db.exec(`PRAGMA busy_timeout = 5000`);
+try { db.exec(`PRAGMA journal_mode = WAL`); } catch { /* already set by another process */ }
 db.exec(`CREATE TABLE IF NOT EXISTS ydocs (
   docName TEXT PRIMARY KEY,
   state BLOB NOT NULL,
