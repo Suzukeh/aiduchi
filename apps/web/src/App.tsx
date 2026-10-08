@@ -9,7 +9,8 @@ type Node = {
 };
 type Win = { id: string; nodeId: string; x: number; y: number; z: number; minimized: boolean };
 
-const API = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "http://localhost:3000";
+// 空文字=同一オリジン（Viteプロキシ経由）。VITE_API_URLで直接指定も可
+const API = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "";
 
 const DEFAULT_WINS: Win[] = [
   { id: "w1", nodeId: "root", x: 40, y: 80, z: 1, minimized: false },

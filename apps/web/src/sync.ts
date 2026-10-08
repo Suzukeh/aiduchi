@@ -16,7 +16,14 @@ export type AwarenessUser = {
   activeWindowId: string | null;
 };
 
-const SYNC_URL = (import.meta as unknown as { env: Record<string, string> }).env.VITE_SYNC_URL ?? "ws://localhost:1234";
+const SYNC_URL_ENV = (import.meta as unknown as { env: Record<string, string> }).env.VITE_SYNC_URL ?? "";
+
+function resolveSyncUrl(): string {
+  if (SYNC_URL_ENV) return SYNC_URL_ENV;
+  // 空文字=同一オリジンの /sync をWSで使う（Viteプロキシ経由）
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.host}/sync`;
+}
 
 /** room単位のY.Doc接続を張り、windows共有マップとpresenceを返す */
 export function connectRoom(roomId: string, joinToken: string, onSync: (s: SyncState) => void): () => void {
@@ -24,7 +31,7 @@ export function connectRoom(roomId: string, joinToken: string, onSync: (s: SyncS
   const windows = doc.getMap<Record<string, unknown>>("windows");
 
   const provider = new HocuspocusProvider({
-    url: SYNC_URL,
+    url: resolveSyncUrl(),
     name: `room:${roomId}`,
     token: joinToken,
     document: doc,
