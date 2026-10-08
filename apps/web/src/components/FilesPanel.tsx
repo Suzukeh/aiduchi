@@ -1,9 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { FileText, RefreshCw, Loader2, Save, Pencil, Eye } from "lucide-react";
+import CodeMirror from "@uiw/react-codemirror";
+import { markdown } from "@codemirror/lang-markdown";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { oneDark } from "@codemirror/theme-one-dark";
 import { useStore } from "../store";
 import * as api from "../api";
 
 type Files = Record<string, string>;
+
+function langFor(path: string) {
+  if (path.endsWith(".md")) return [markdown()];
+  if (path.endsWith(".json")) return [json()];
+  if (path.endsWith(".ts") || path.endsWith(".tsx") || path.endsWith(".js") || path.endsWith(".jsx")) return [javascript({ jsx: true, typescript: path.endsWith("ts") || path.endsWith("tsx") })];
+  return [];
+}
 
 export function FilesPanel({ nodeId }: { nodeId: string }) {
   const roomId = useStore((s) => s.roomId);
@@ -130,12 +142,16 @@ export function FilesPanel({ nodeId }: { nodeId: string }) {
                 </div>
               </div>
               {editing ? (
-                <textarea
-                  className="min-h-0 flex-1 resize-none bg-black/20 p-3 font-mono text-[11px] leading-relaxed text-gray-200 outline-none"
-                  value={currentContent}
-                  onChange={(e) => setEdits((prev) => ({ ...prev, [selected]: e.target.value }))}
-                  spellCheck={false}
-                />
+                <div className="min-h-0 flex-1 overflow-auto text-[11px]">
+                  <CodeMirror
+                    value={currentContent}
+                    theme={oneDark}
+                    extensions={langFor(selected)}
+                    onChange={(v) => setEdits((prev) => ({ ...prev, [selected]: v }))}
+                    basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}
+                    style={{ height: "100%" }}
+                  />
+                </div>
               ) : (
                 <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-gray-300">{currentContent}</pre>
               )}

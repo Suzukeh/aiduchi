@@ -82,8 +82,11 @@ test.describe("aiduchi E2E", () => {
     // ファイルタブ→編集
     await page.getByRole("button", { name: "ファイル" }).first().click();
     await page.getByRole("button", { name: "編集" }).first().click();
-    const editor = page.locator("textarea.font-mono").first();
-    await editor.fill("edited by test");
+    // CodeMirrorエディタで内容を書き換え
+    const editor = page.locator(".cm-content").first();
+    await editor.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type("edited by test");
     // 保存ボタンが出る
     await page.getByRole("button", { name: "保存" }).click();
 
