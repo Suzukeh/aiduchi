@@ -46,4 +46,24 @@ test.describe("aiduchi E2E", () => {
     const stored = await page.evaluate(() => localStorage.getItem("aiduchi.name"));
     expect(stored).toBe("すずけ");
   });
+
+  test("ファイルタブで生成物を閲覧できる", async ({ page }) => {
+    await page.goto("/");
+    await page.getByPlaceholder("room name").fill("e2e-files");
+    await page.getByRole("button", { name: "作成" }).click();
+    await expect(page.getByRole("button", { name: "新しい窓", exact: true })).toBeEnabled({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "新しい窓", exact: true }).click();
+    const textarea = page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first();
+    await textarea.fill("make a note file");
+    await textarea.press("Control+Enter");
+    await expect(page.getByText("+notes/").first()).toBeVisible({ timeout: 15_000 });
+
+    // ファイルタブに切り替え
+    await page.getByRole("button", { name: "ファイル" }).first().click();
+    // ファイル一覧にREADME.mdが見える
+    await expect(page.getByText("README.md")).toBeVisible({ timeout: 10_000 });
+    // notes/xxx.mdも見える
+    await expect(page.getByText(/notes\//).first()).toBeVisible();
+  });
 });

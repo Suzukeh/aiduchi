@@ -1,5 +1,6 @@
 # DECISIONS — 決定ログ（新しいものほど上）
 
+- D21 (2026-10-08): Web UIはTailwind+react-rnd+React Flow+Zustandに全面移行。手書きinline styleを廃止。
 - D20 (2026-10-08): 映像編集機能はgehditorリポジトリに一本化。aiduchiからvideoアダプタを除去。今後混ぜない。
 - D19 (2026-10-08): gehditor（映像ソフト本体）を別リポジトリで開発。aiduchiは開発基盤としてgehditor開発を通じて改善する相互関係。
 - D18 (2026-10-08): Tunnel公開は Vite :5173 単一入口（/api, /sync をプロキシ）。Web/API URLは相対パス化で同一オリジン動作。
