@@ -1,6 +1,12 @@
 tunnel: aiduchi-dev
-credentials-file: /home/archuser1/.cloudflared/aiduchi-dev.json
+credentials-file: ~/.cloudflared/aiduchi-dev.json
 ingress:
+  # アプリ本体（REST + SSE）
   - hostname: collab.example.com
     service: http://localhost:3000
+  # 同期サーバ（Hocuspocus WS。P1で本格使用）
+  - hostname: sync-collab.example.com
+    service: ws://localhost:1234
   - service: http_status:404
+# 身内公開なら dash側で collab.example.com に Cloudflare Access(OTP) を付ける。
+# Quick TunnelはランダムURL・SSE不可のため非推奨。必ずNamedを使う。

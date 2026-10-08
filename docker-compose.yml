@@ -4,6 +4,10 @@ services:
     ports:
       - "3000:3000"
     env_file: .env
+    environment:
+      - DATA_DIR=/srv/data
+    volumes:
+      - aiduchi-data:/srv/data
     depends_on:
       - sync
   sync:
@@ -14,6 +18,12 @@ services:
       - "1234:1234"
     env_file: .env
   web:
-    build: ./apps/web
+    build:
+      context: ./apps/web
+      args:
+        - VITE_API_URL=${PUBLIC_API_URL:-http://localhost:3000}
     ports:
       - "5173:5173"
+
+volumes:
+  aiduchi-data:

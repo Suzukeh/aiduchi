@@ -27,14 +27,19 @@ Dockerでまとめて動かす：
 docker compose up --build
 ```
 
-Cloudflare Tunnel（Named推奨、QuickはSSEが使えないため非推奨）：
+Cloudflare Tunnel（Named必須。QuickはランダムURL＋SSE不可のため非推奨）：
 
 ```bash
 cloudflared tunnel create aiduchi-dev
 cloudflared tunnel route dns aiduchi-dev collab.example.com
-# cloudflared/config.yml を編集して
-cloudflared tunnel --config ./cloudflared/config.yml run
+cloudflared tunnel route dns aiduchi-dev sync-collab.example.com
+cp cloudflared/config.yml.example ~/.cloudflared/aiduchi.yml  # ホスト名を編集
+cloudflared tunnel --config ~/.cloudflared/aiduchi.yml run
+# 身内限定にする場合は dash側で Access(OTP) ポリシーを付ける
 ```
+
+本番相当の公開では `PUBLIC_API_URL=https://collab.example.com docker compose up --build`
+でwebをビルドし、`apps/web/.env` の向き先も公開URLに合わせる。
 
 ## 構成
 
@@ -63,6 +68,6 @@ WS   /sync (hocuspocus :1234)
 
 ## ロードマップ
 
-- P0: room入室、複数窓、Nodeツリー、Hocuspocus同期、ホストキーAI往復、codeアダプタ最小
-- P1: videoアダプタ（AE例：ProjectJSON + タイムライン + export）
-- P2: BYOK任意対応、公開手順整備
+- P0: room入室、複数窓、Nodeツリー、Hocuspocus同期、ホストキーAI往復、codeアダプタ最小、SQLite永続化、BYOK任意 ✅
+- P1: videoアダプタ（AE例：ProjectJSON + タイムライン + export）、Yjsリアルタイム同期本格化
+- P2: 公開手順整備、予算・管理画面
