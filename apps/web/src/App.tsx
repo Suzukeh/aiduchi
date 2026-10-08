@@ -33,6 +33,8 @@ export function App() {
   const [err, setErr] = useState("");
   const [peers, setPeers] = useState<AwarenessUser[]>([]);
   const [synced, setSynced] = useState(false);
+  const [userName, setUserName] = useState(() => localStorage.getItem("aiduchi.name") ?? "");
+  const syncHandleRef = useRef<{ disconnect: () => void; setPresenceName: (n: string) => void } | null>(null);
   const [byokProvider, setByokProvider] = useState(() => localStorage.getItem("aiduchi.byokProvider") ?? "");
   const [byokKey, setByokKey] = useState(() => localStorage.getItem("aiduchi.byokKey") ?? "");
   const [byokModel, setByokModel] = useState(() => localStorage.getItem("aiduchi.byokModel") ?? "");
@@ -71,7 +73,7 @@ export function App() {
 
   useEffect(() => {
     if (!roomId || !token) return;
-    const disconnect = connectRoom(roomId, token, (s) => {
+    const handle = connectRoom(roomId, token, (s) => {
       syncRef.current = s;
       setSynced(s.connected);
       const u = localStorage.getItem("aiduchi.userId") ?? "";
@@ -87,7 +89,8 @@ export function App() {
         setWins(DEFAULT_WINS);
       }
     });
-    return () => { disconnect(); syncRef.current = null; setSynced(false); setPeers([]); };
+    syncHandleRef.current = handle;
+    return () => { handle.disconnect(); syncRef.current = null; syncHandleRef.current = null; setSynced(false); setPeers([]); };
   }, [roomId, token, yMapToWins]);
 
   // ローカルのwins変更をY.Mapへ反映（デバウンス）
@@ -171,6 +174,19 @@ export function App() {
     <div style={{ fontFamily: "sans-serif", height: "100vh", display: "flex" }}>
       <aside style={{ width: 300, borderRight: "1px solid #ddd", padding: 12, overflow: "auto" }}>
         <h2>aiduchi</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 5, background: localStorage.getItem("aiduchi.color") ?? "#999", flexShrink: 0 }} />
+          <input
+            value={userName}
+            onChange={(e) => {
+              setUserName(e.target.value);
+              localStorage.setItem("aiduchi.name", e.target.value);
+              syncHandleRef.current?.setPresenceName(e.target.value);
+            }}
+            placeholder="あなたの名前"
+            style={{ flex: 1, fontSize: 13 }}
+          />
+        </div>
         <div style={{ display: "flex", gap: 8 }}>
           <input value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="room name" style={{ flex: 1 }} />
           <select value={roomKind} onChange={(e) => setRoomKind(e.target.value as "code" | "video")} style={{ width: 70 }}>
@@ -259,6 +275,7 @@ export function App() {
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "#eee", padding: 4 }}>
           dock: {wins.map((w) => <button key={w.id} onClick={() => setWins((ws) => ws.map((x) => x.id === w.id ? { ...x, minimized: !x.minimized } : x))}>{w.id}{w.minimized ? "(閉)" : ""}</button>)}
           <span style={{ marginLeft: 16, fontSize: 11, color: "#666" }}>
+            {userName && <span style={{ marginRight: 8 }}>自分: {userName}</span>}
             {peers.length > 0 ? `参加中: ${peers.map((p) => p.name).join(", ")}` : "他に参加者はいません"}
           </span>
         </div>

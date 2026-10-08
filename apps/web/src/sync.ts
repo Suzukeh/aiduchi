@@ -25,8 +25,13 @@ function resolveSyncUrl(): string {
   return `${proto}//${location.host}/sync`;
 }
 
+export type SyncHandle = {
+  disconnect: () => void;
+  setPresenceName: (name: string) => void;
+};
+
 /** room単位のY.Doc接続を張り、windows共有マップとpresenceを返す */
-export function connectRoom(roomId: string, joinToken: string, onSync: (s: SyncState) => void): () => void {
+export function connectRoom(roomId: string, joinToken: string, onSync: (s: SyncState) => void): SyncHandle {
   const doc = new Y.Doc();
   const windows = doc.getMap<Record<string, unknown>>("windows");
 
@@ -59,19 +64,31 @@ export function connectRoom(roomId: string, joinToken: string, onSync: (s: SyncS
   localStorage.setItem("aiduchi.userId", userId);
   const color = localStorage.getItem("aiduchi.color") ?? `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0")}`;
   localStorage.setItem("aiduchi.color", color);
-  const name = localStorage.getItem("aiduchi.name") ?? `user-${userId}`;
-  localStorage.setItem("aiduchi.name", name);
+  const name = localStorage.getItem("aiduchi.name") ?? "";
+  if (!name) localStorage.setItem("aiduchi.name", "");
+
+  function setPresenceName(newName: string) {
+    localStorage.setItem("aiduchi.name", newName);
+    const aw = state.awareness;
+    if (aw) {
+      aw.setLocalStateField("user", { userId, name: newName || `user-${userId}`, color, activeWindowId: null });
+      emit();
+    }
+  }
 
   const aw = provider.awareness;
   if (aw) {
-    aw.setLocalStateField("user", { userId, name, color, activeWindowId: null } satisfies AwarenessUser);
+    aw.setLocalStateField("user", { userId, name: name || `user-${userId}`, color, activeWindowId: null } satisfies AwarenessUser);
     aw.on("change", () => emit());
   }
 
   emit();
-  return () => {
-    provider.destroy();
-    doc.destroy();
+  return {
+    disconnect: () => {
+      provider.destroy();
+      doc.destroy();
+    },
+    setPresenceName,
   };
 }
 
