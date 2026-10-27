@@ -135,15 +135,8 @@ export function NodePanel({ nodeId }: { nodeId: string | null }) {
             {STATUS_META[node.status].label}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-1">
-          {node && node.status !== "adopted" && (
-            <button
-              className="rounded px-1.5 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10"
-              onClick={() => adopt(node.id)}
-            >
-              採用
-            </button>
-          )}
+        {/* タブは左寄せ: 右側にフローティング窓が重なっても操作できる */}
+        <div className="ml-2 flex items-center gap-1">
           {(
             [
               ["preview", "プレビュー", <Eye key="p" size={11} />],
@@ -162,6 +155,16 @@ export function NodePanel({ nodeId }: { nodeId: string | null }) {
               {label}
             </button>
           ))}
+        </div>
+        <div className="ml-auto flex items-center gap-1">
+          {node && node.status !== "adopted" && (
+            <button
+              className="rounded px-1.5 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10"
+              onClick={() => adopt(node.id)}
+            >
+              採用
+            </button>
+          )}
         </div>
       </div>
 
