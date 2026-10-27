@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://docs.replit.com/features/agent/task-board",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 2,
+      "url": "https://v0.app/docs/github",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 3,
+      "url": "https://v0.app/docs/design-mode",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 4,
+      "url": "https://git-scm.com/docs/git-worktree",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 5,
+      "url": "https://docs.yjs.dev/api/y.doc",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 6,
+      "url": "https://tiptap.dev/docs/hocuspocus/server/extensions/database",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 7,
+      "url": "https://v0.app/docs/code-editing",
+      "title": "",
+      "accessed": "2026-10-27"
+    },
+    {
+      "id": 8,
+      "url": "https://v0.app/docs/sandbox",
+      "title": "",
+      "accessed": "2026-10-27"
+    }
+  ]
+}

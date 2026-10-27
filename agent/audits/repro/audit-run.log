@@ -1,0 +1,58 @@
+[WebServer] (node:1906396) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 2 tests using 1 worker
+
+  ✘  1 tests/replan-audit.spec.ts:30:5 › 保存済み内容は編集開始時にも表示される (3.1s)
+{"sharedA":"","sharedB":""}
+{"branchBExpected":"branch-B","branchBActuallySaved":""}
+  ✘  2 tests/replan-audit.spec.ts:38:5 › 分岐Bの編集保存に分岐Aの内容が混入しない (1.7s)
+
+
+  1) tests/replan-audit.spec.ts:30:5 › 保存済み内容は編集開始時にも表示される ─────────────────────────────────────────
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator:  locator('.cm-content')
+    Expected: "branch-A"
+    Received: ""
+    Timeout:  2000ms
+
+    Call log:
+      - Expect "toHaveText" locator('.cm-content') with timeout 2000ms
+      - waiting for locator('.cm-content')
+        21 × locator resolved to <div translate="no" role="textbox" autocorrect="off" spellcheck="false" class="cm-content" autocapitalize="off" aria-multiline="true" contenteditable="true" data-language="markdown" aria-autocomplete="list" writingsuggestions="false">…</div>
+           - unexpected value ""
+
+
+      33 |   await expect(page.locator('pre')).toHaveText('branch-A');
+      34 |   await page.getByRole('button', { name: '編集', exact: true }).click();
+    > 35 |   await expect(page.locator('.cm-content')).toHaveText('branch-A', { timeout: 2000 });
+         |                                             ^
+      36 | });
+      37 |
+      38 | test('分岐Bの編集保存に分岐Aの内容が混入しない', async ({ page, request }) => {
+        at /home/archuser1/.hermes/cache/scratch/aiduchi-replan-3v0svni4/tests/replan-audit.spec.ts:35:45
+
+    Error Context: test-results/replan-audit-保存済み内容は編集開始時にも表示される/error-context.md
+
+  2) tests/replan-audit.spec.ts:38:5 › 分岐Bの編集保存に分岐Aの内容が混入しない ───────────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "branch-B"
+    Received: ""
+
+      62 |   const saved = await (await request.get(`${api}/api/rooms/${id}/snapshots/${child.id}`, { headers })).json();
+      63 |   console.log(JSON.stringify({ branchBExpected: 'branch-B', branchBActuallySaved: saved.files['README.md'] }));
+    > 64 |   expect(saved.files['README.md']).toBe('branch-B');
+         |                                    ^
+      65 | });
+      66 |
+        at /home/archuser1/.hermes/cache/scratch/aiduchi-replan-3v0svni4/tests/replan-audit.spec.ts:64:36
+
+    Error Context: test-results/replan-audit-分岐Bの編集保存に分岐Aの内容が混入しない/error-context.md
+
+  2 failed
+    tests/replan-audit.spec.ts:30:5 › 保存済み内容は編集開始時にも表示される ──────────────────────────────────────────
+    tests/replan-audit.spec.ts:38:5 › 分岐Bの編集保存に分岐Aの内容が混入しない ────────────────────────────────────────
