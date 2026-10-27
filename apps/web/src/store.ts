@@ -4,7 +4,9 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as api from "./api";
 import type { AwarenessUser, NodeMeta, Win } from "./types";
 
-const SYNC_URL_ENV = (import.meta as unknown as { env: Record<string, string> }).env.VITE_SYNC_URL ?? "";
+const ENV = (import.meta as unknown as { env: Record<string, string> }).env;
+const SYNC_URL_ENV = ENV.VITE_SYNC_URL ?? "";
+
 function resolveSyncUrl(): string {
   if (SYNC_URL_ENV) return SYNC_URL_ENV;
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -12,61 +14,72 @@ function resolveSyncUrl(): string {
 }
 
 function load(key: string, fallback = ""): string {
-  return localStorage.getItem(key) ?? fallback;
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 function store(key: string, value: string) {
-  localStorage.setItem(key, value);
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* 表示設定が保存できなくても致命的ではない */
+  }
 }
 
 const userId = load("aiduchi.userId") || crypto.randomUUID().slice(0, 8);
 store("aiduchi.userId", userId);
+try { localStorage.removeItem("aiduchi.byokKey"); } catch { /* 旧版が保存していたキーを消す */ }
 const userColor = load("aiduchi.color") || `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0")}`;
 store("aiduchi.color", userColor);
 
 type Byok = { provider: string; key: string; model: string };
+type NodeDoc = { doc: Y.Doc; provider: HocuspocusProvider; files: Y.Map<Y.Text> };
 
 type State = {
-  // session
   roomId: string;
   token: string;
   roomName: string;
   error: string;
 
-  // server data
   nodes: NodeMeta[];
   loadingNodes: boolean;
 
-  // shared window state (Yjs-backed)
+  /** 個人の窓配置。サーバ・他参加者とは共有しない */
   windows: Win[];
   activeWinId: string | null;
+  /** 中央パネルが表示している版。窓のフォーカスや最小化では変えない */
+  selectedNodeId: string | null;
 
-  // presence
   userName: string;
   peers: AwarenessUser[];
   synced: boolean;
 
-  // byok
+  /** チェックポイントごとの同期接続状態 */
+  nodeSynced: Record<string, boolean>;
+  /** Yjsのファイル内容が変わったことをUIへ伝えるカウンタ */
+  filesRev: number;
+
   byok: Byok;
 
-  // ui
   view: "list" | "board";
-  showTree: boolean;
 
-  // actions
   init: () => void;
   createRoom: (name: string) => Promise<void>;
   refreshNodes: () => Promise<void>;
   sendPrompt: (winId: string, prompt: string) => Promise<void>;
   adopt: (nodeId: string) => Promise<void>;
   abandon: (nodeId: string) => Promise<void>;
+  saveFiles: (nodeId: string, files: Record<string, string>, label: string, baseHash: string) => Promise<NodeMeta>;
 
   setUserName: (name: string) => void;
   setByok: (b: Byok) => void;
+  setView: (v: "list" | "board") => void;
+  setError: (message: string) => void;
 
   setActiveWin: (id: string | null) => void;
-  setView: (v: "list" | "board") => void;
-  setShowTree: (v: boolean) => void;
-
+  setDraft: (winId: string, text: string) => void;
   openWindow: (nodeId: string | null) => void;
   closeWindow: (winId: string) => void;
   updateWin: (winId: string, patch: Partial<Pick<Win, "x" | "y" | "w" | "h" | "z" | "minimized" | "nodeId">>) => void;
@@ -74,46 +87,45 @@ type State = {
 
   connectSync: () => void;
   disconnectSync: () => void;
+  ensureNode: (nodeId: string) => NodeDoc | null;
+  readFiles: (nodeId: string) => Record<string, string> | null;
 };
 
-// ── Yjs runtime (non-reactive) ──
-let provider: HocuspocusProvider | null = null;
-let doc: Y.Doc | null = null;
-let windowsMap: Y.Map<Win> | null = null;
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
+// ── Yjs runtime（非リアクティブ） ──
+let lobby: HocuspocusProvider | null = null;
+const nodeDocs = new Map<string, NodeDoc>();
 
-/** ファイル共同編集などで使うY.Doc参照（未接続時はnull） */
-export function getYDoc(): Y.Doc | null {
-  return doc;
-}
-/** ファイル内容の共有マップ（path -> Y.Text）を取得。無ければ作る */
-export function getYFiles(): Y.Map<Y.Text> | null {
-  if (!doc) return null;
-  return doc.getMap<Y.Text>("files");
-}
-/** リモートカーソル表示用のawareness（未接続時はnull） */
-export function getYAwareness() {
-  return provider?.awareness ?? null;
+function windowsKey(roomId: string) {
+  return `aiduchi.windows.${roomId}`;
 }
 
-function writeWindowsToY(next: Win[]) {
-  const d = doc;
-  const map = windowsMap;
-  if (!d || !map) return;
-  d.transact(() => {
-    const ids = new Set(next.map((w) => w.id));
-    for (const key of [...map.keys()]) {
-      if (!ids.has(key)) map.delete(key);
-    }
-    for (const w of next) map.set(w.id, { ...w });
-  }, "local");
+function readWindows(roomId: string): Win[] {
+  try {
+    const raw = load(windowsKey(roomId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Win[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((w) => w && typeof w.id === "string")
+      .map((w) => ({
+        id: w.id,
+        nodeId: typeof w.nodeId === "string" && w.nodeId !== "root" ? w.nodeId : null,
+        draft: typeof w.draft === "string" ? w.draft : "",
+        x: Number(w.x) || 40,
+        y: Number(w.y) || 40,
+        w: Number(w.w) || 400,
+        h: Number(w.h) || 380,
+        z: Number(w.z) || 1,
+        minimized: !!w.minimized,
+      }));
+  } catch {
+    return [];
+  }
 }
 
-function scheduleRestSave(state: Pick<State, "roomId" | "token" | "windows">) {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    if (state.roomId && state.token) api.saveWindows(state.roomId, state.token, state.windows);
-  }, 1500);
+function persistWindows(roomId: string, windows: Win[]) {
+  if (!roomId) return;
+  store(windowsKey(roomId), JSON.stringify(windows));
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -127,36 +139,38 @@ export const useStore = create<State>((set, get) => ({
 
   windows: [],
   activeWinId: null,
+  selectedNodeId: null,
 
   userName: load("aiduchi.name"),
   peers: [],
   synced: false,
 
-  byok: {
-    provider: load("aiduchi.byokProvider"),
-    key: load("aiduchi.byokKey"),
-    model: load("aiduchi.byokModel"),
-  },
+  nodeSynced: {},
+  filesRev: 0,
+
+  byok: { provider: load("aiduchi.byokProvider"), key: "", model: load("aiduchi.byokModel") },
 
   view: "list",
-  showTree: false,
 
   init: () => {
     const params = new URLSearchParams(location.search);
     const room = params.get("room");
     const token = params.get("token");
-    if (room && token) {
-      set({ roomId: room, token });
-      get().connectSync();
-      get().refreshNodes();
-    }
+    if (!room || !token) return;
+    set({ roomId: room, token, windows: readWindows(room) });
+    get().connectSync();
+    get().refreshNodes();
+    api
+      .getRoom(room, token)
+      .then((info) => set({ roomName: info.name }))
+      .catch(() => undefined);
   },
 
   createRoom: async (name) => {
     set({ error: "" });
     try {
       const r = await api.createRoom(name);
-      set({ roomId: r.id, token: r.joinToken, roomName: name });
+      set({ roomId: r.id, token: r.joinToken, roomName: name, windows: readWindows(r.id), activeWinId: null });
       history.replaceState(null, "", `?room=${r.id}&token=${r.joinToken}`);
       get().connectSync();
       await get().refreshNodes();
@@ -180,16 +194,18 @@ export const useStore = create<State>((set, get) => ({
   },
 
   sendPrompt: async (winId, prompt) => {
-    const { roomId, token, byok, windows } = get();
+    const { roomId, token, byok, windows, userName } = get();
     const win = windows.find((w) => w.id === winId);
-    if (!roomId || !token || !win || !prompt.trim()) return;
+    const text = prompt.trim();
+    if (!roomId || !token || !win || !text) return;
     set({ error: "" });
     try {
-      const parentId = win.nodeId === "root" ? null : win.nodeId;
-      const node = await api.createNode(roomId, token, parentId, prompt.trim(), byok);
-      // 子ノードの窓を開く（送信元の窓を新ノードに進める）
+      const node = await api.createNode(roomId, token, win.nodeId, text, byok, userName);
       get().updateWin(winId, { nodeId: node.id });
+      set({ selectedNodeId: node.id });
+      get().setDraft(winId, "");
       await get().refreshNodes();
+      get().ensureNode(node.id);
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "send failed" });
     }
@@ -217,11 +233,19 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  saveFiles: async (nodeId, files, label, baseHash) => {
+    const { roomId, token, userName } = get();
+    if (!roomId || !token) throw new Error("not in a room");
+    const child = await api.saveSnapshot(roomId, token, nodeId, files, label, userName, baseHash);
+    await get().refreshNodes();
+    return child;
+  },
+
   setUserName: (name) => {
     store("aiduchi.name", name);
     set({ userName: name });
-    if (provider?.awareness) {
-      provider.awareness.setLocalStateField("user", {
+    if (lobby?.awareness) {
+      lobby.awareness.setLocalStateField("user", {
         userId,
         name: name || `user-${userId}`,
         color: userColor,
@@ -229,49 +253,58 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  // BYOKキーはメモリのみ。localStorageへは保存しない（プロバイダ名とモデル名だけ記憶）
   setByok: (b) => {
     store("aiduchi.byokProvider", b.provider);
-    store("aiduchi.byokKey", b.key);
     store("aiduchi.byokModel", b.model);
     set({ byok: b });
   },
 
-  setActiveWin: (id) => set({ activeWinId: id }),
   setView: (v) => set({ view: v }),
-  setShowTree: (v) => set({ showTree: v }),
+  setActiveWin: (id) => set({ activeWinId: id }),
+  setError: (message) => set({ error: message }),
+
+  setDraft: (winId, text) => {
+    const next = get().windows.map((w) => (w.id === winId ? { ...w, draft: text } : w));
+    set({ windows: next });
+    persistWindows(get().roomId, next);
+  },
 
   openWindow: (nodeId) => {
-    const id = `w${Date.now().toString(36)}`;
-    const { windows } = get();
+    const { windows, roomId } = get();
+    const id = `w${Date.now().toString(36)}${Math.floor(Math.random() * 100).toString(36)}`;
     const maxZ = Math.max(0, ...windows.map((w) => w.z));
+    const offset = (windows.length % 6) * 24;
+    // 中央のプレビュー/ファイル領域を隠しすぎないよう、右側に置く
+    const canvasWidth = Math.max(480, window.innerWidth - 288);
+    const x = Math.max(24, Math.min(canvasWidth - 430, canvasWidth * 0.52)) - offset;
     const win: Win = {
       id,
-      nodeId: nodeId ?? "root",
-      x: 60 + (windows.length % 5) * 36,
-      y: 40 + (windows.length % 5) * 32,
-      w: 380,
-      h: 320,
+      nodeId: nodeId ?? null,
+      draft: "",
+      x,
+      y: 56 + offset,
+      w: 400,
+      h: 380,
       z: maxZ + 1,
       minimized: false,
     };
     const next = [...windows, win];
-    set({ windows: next, activeWinId: id });
-    writeWindowsToY(next);
-    scheduleRestSave({ ...get(), windows: next });
+    set({ windows: next, activeWinId: id, ...(nodeId ? { selectedNodeId: nodeId } : {}) });
+    persistWindows(roomId, next);
   },
 
   closeWindow: (winId) => {
     const next = get().windows.filter((w) => w.id !== winId);
-    set({ windows: next, activeWinId: get().activeWinId === winId ? null : get().activeWinId });
-    writeWindowsToY(next);
-    scheduleRestSave({ ...get(), windows: next });
+    const activeWinId = get().activeWinId === winId ? (next[next.length - 1]?.id ?? null) : get().activeWinId;
+    set({ windows: next, activeWinId });
+    persistWindows(get().roomId, next);
   },
 
   updateWin: (winId, patch) => {
     const next = get().windows.map((w) => (w.id === winId ? { ...w, ...patch } : w));
-    set({ windows: next });
-    writeWindowsToY(next);
-    scheduleRestSave({ ...get(), windows: next });
+    set({ windows: next, ...(patch.nodeId ? { selectedNodeId: patch.nodeId } : {}) });
+    persistWindows(get().roomId, next);
   },
 
   focusWindow: (winId) => {
@@ -279,80 +312,104 @@ export const useStore = create<State>((set, get) => ({
     const maxZ = Math.max(0, ...windows.map((w) => w.z));
     const next = windows.map((w) => (w.id === winId ? { ...w, z: maxZ + 1 } : w));
     set({ windows: next, activeWinId: winId });
-    writeWindowsToY(next);
+    persistWindows(get().roomId, next);
   },
 
   connectSync: () => {
     const { roomId, token, userName } = get();
-    if (!roomId || !token || provider) return;
-    doc = new Y.Doc();
-    windowsMap = doc.getMap<Win>("windows");
-    provider = new HocuspocusProvider({
+    if (!roomId || !token || lobby) return;
+    lobby = new HocuspocusProvider({
       url: resolveSyncUrl(),
-      name: `room:${roomId}`,
+      name: `room:${roomId}:node:lobby`,
       token,
-      document: doc,
     });
 
-    const pushWindows = () => {
-      if (!windowsMap) return;
-      const list: Win[] = [];
-      windowsMap.forEach((v) => { if (v && v.id) list.push(v); });
-      set({ windows: list.sort((a, b) => a.z - b.z) });
-    };
-
     const pushPeers = () => {
-      if (!provider?.awareness) return;
+      if (!lobby?.awareness) return;
       const peers: AwarenessUser[] = [];
-      provider.awareness.getStates().forEach((s) => {
+      lobby.awareness.getStates().forEach((s) => {
         const u = (s as { user?: AwarenessUser }).user;
         if (u && u.userId !== userId) peers.push(u);
       });
       set({ peers });
     };
 
-    provider.on("synced", (e: { state: boolean }) => {
-      set({ synced: e.state });
-      if (e.state) {
-        // 初回: 優先順位は ローカル保持 > REST保存 > 既定窓（他クライアントの窓は上書きしない）
-        const fromY = [...windowsMap!.values()];
-        if (fromY.length > 0) return;
-        const local = get().windows;
-        if (local.length > 0) {
-          writeWindowsToY(local);
-          return;
-        }
-        api.loadWindows(roomId, token).then((rest) => {
-          if (rest && rest.length > 0) {
-            const wins = (rest as unknown as { id: string; nodeId: string; x: number; y: number; w: number; h: number; z: number; minimized: number | boolean }[]).map((w) => ({
-              id: w.id, nodeId: w.nodeId, x: w.x, y: w.y, w: w.w, h: w.h, z: w.z, minimized: !!w.minimized,
-            }));
-            writeWindowsToY(wins);
-          }
-          // 何もなければ空のまま（ユーザーが「新しい窓」で開始）
-        }).catch(() => undefined);
-      }
-    });
-    provider.on("status", (e: { status: string }) => set({ synced: e.status === "connected" }));
-
-    windowsMap.observe(pushWindows);
-    provider.awareness?.setLocalStateField("user", {
+    lobby.on("synced", (e: { state: boolean }) => set({ synced: e.state }));
+    lobby.on("status", (e: { status: string }) => set({ synced: e.status === "connected" }));
+    lobby.awareness?.setLocalStateField("user", {
       userId,
       name: userName || `user-${userId}`,
       color: userColor,
     } satisfies AwarenessUser);
-    provider.awareness?.on("change", pushPeers);
-
-    pushWindows();
+    lobby.awareness?.on("change", pushPeers);
     pushPeers();
   },
 
   disconnectSync: () => {
-    provider?.destroy();
-    doc?.destroy();
-    provider = null;
-    doc = null;
-    windowsMap = null;
-    set({ synced: false, peers: [], windows: [] });
+    lobby?.destroy();
+    lobby = null;
+    for (const entry of nodeDocs.values()) {
+      entry.provider.destroy();
+      entry.doc.destroy();
+    }
+    nodeDocs.clear();
+    set({ synced: false, peers: [], nodeSynced: {} });
+  },
+
+  /**
+   * チェックポイントごとのY.Doc。ドキュメント名にノードIDを含めるので、
+   * 別分岐の同名ファイルが同じ共同編集オブジェクトに接続されることはない。
+   * 初期内容は同期サーバがスナップショットから一度だけ流し込む。
+   */
+  ensureNode: (nodeId) => {
+    const { roomId, token } = get();
+    if (!roomId || !token) return null;
+    const existing = nodeDocs.get(nodeId);
+    if (existing) return existing;
+
+    const doc = new Y.Doc();
+    const files = doc.getMap<Y.Text>("files");
+    const provider = new HocuspocusProvider({
+      url: resolveSyncUrl(),
+      name: `room:${roomId}:node:${nodeId}`,
+      token,
+      document: doc,
+    });
+    const entry: NodeDoc = { doc, provider, files };
+    nodeDocs.set(nodeId, entry);
+
+    const bump = () => set((s) => ({ filesRev: s.filesRev + 1 }));
+    files.observeDeep(bump);
+    provider.on("synced", (e: { state: boolean }) => {
+      set((s) => ({ nodeSynced: { ...s.nodeSynced, [nodeId]: e.state } }));
+      bump();
+    });
+    provider.on("status", (e: { status: string }) => {
+      set((s) => ({ nodeSynced: { ...s.nodeSynced, [nodeId]: e.status === "connected" } }));
+    });
+    return entry;
+  },
+
+  readFiles: (nodeId) => {
+    const entry = get().ensureNode(nodeId);
+    if (!entry) return null;
+    const out: Record<string, string> = {};
+    entry.files.forEach((text, path) => {
+      if (text instanceof Y.Text) out[path] = text.toString();
+    });
+    return out;
   },
 }));
+
+/** テスト・デバッグ用 */
+export function getNodeYDoc(nodeId: string): Y.Doc | null {
+  return nodeDocs.get(nodeId)?.doc ?? null;
+}
+
+export function getNodeFiles(nodeId: string): Y.Map<Y.Text> | null {
+  return nodeDocs.get(nodeId)?.files ?? null;
+}
+
+export function getNodeAwareness(nodeId: string) {
+  return nodeDocs.get(nodeId)?.provider.awareness ?? null;
+}

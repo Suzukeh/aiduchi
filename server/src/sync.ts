@@ -4,7 +4,7 @@ import { Hocuspocus } from "@hocuspocus/server";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { encodeStateAsUpdate, applyUpdate } from "yjs";
+import * as Y from "yjs";
 
 const dir = process.env.DATA_DIR ?? "./data";
 mkdirSync(dir, { recursive: true });
@@ -23,12 +23,55 @@ const saveStmt = db.prepare(
 );
 const loadStmt = db.prepare(`SELECT state FROM ydocs WHERE docName = ?`);
 const findRoomStmt = db.prepare(`SELECT joinToken FROM rooms WHERE id = ?`);
+const snapshotStmt = db.prepare(`SELECT data FROM snapshots WHERE roomId = ? AND nodeId = ?`);
+
+/** room:{roomId}:node:{nodeId} — nodeId is "root", "lobby" or a checkpoint id */
+export function parseDocName(name) {
+  const m = /^room:([0-9a-f-]{4,64}):node:([A-Za-z0-9_-]{1,64})$/.exec(String(name));
+  return m ? { roomId: m[1], nodeId: m[2] } : null;
+}
 
 function roomTokenOk(documentName, token) {
-  if (!token) return false;
-  const roomId = documentName.startsWith("room:") ? documentName.slice(5) : documentName;
-  const row = findRoomStmt.get(roomId);
+  const parsed = parseDocName(documentName);
+  if (!parsed || !token) return false;
+  const row = findRoomStmt.get(parsed.roomId);
   return !!row && row.joinToken === token;
+}
+
+export function filesOf(roomId, nodeId) {
+  if (nodeId === "lobby") return {};
+  const row = snapshotStmt.get(roomId, nodeId);
+  if (!row?.data) return {};
+  try {
+    const parsed = JSON.parse(row.data);
+    return parsed && typeof parsed.files === "object" && parsed.files ? parsed.files : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Seed a new document exactly once, on the server, from the checkpoint snapshot.
+ * Seeding here (not in each browser) is what stops two participants inserting the
+ * same initial text twice and what keeps branch documents independent.
+ */
+function seedDocument(document, roomId, nodeId) {
+  const meta = document.getMap("meta");
+  if (meta.get("initialized")) return;
+  const files = filesOf(roomId, nodeId);
+  const filesMap = document.getMap("files");
+  document.transact(() => {
+    if (meta.get("initialized")) return;
+    for (const [path, content] of Object.entries(files)) {
+      const text = new Y.Text();
+      const str = typeof content === "string" ? content : String(content ?? "");
+      if (str.length > 0) text.insert(0, str);
+      filesMap.set(path, text);
+    }
+    meta.set("initialized", true);
+    meta.set("seedNodeId", nodeId);
+    meta.set("seededAt", new Date().toISOString());
+  }, "server-seed");
 }
 
 const hocuspocus = new Hocuspocus({
@@ -48,8 +91,10 @@ const hocuspocus = new Hocuspocus({
       const row = loadStmt.get(documentName);
       if (row?.state) {
         const bytes = row.state instanceof Uint8Array ? row.state : new Uint8Array(row.state);
-        if (bytes.length > 0) applyUpdate(document, bytes);
+        if (bytes.length > 0) Y.applyUpdate(document, bytes);
       }
+      const parsed = parseDocName(documentName);
+      if (parsed) seedDocument(document, parsed.roomId, parsed.nodeId);
     } catch (e) {
       console.warn(`onLoadDocument ${documentName}:`, e.message);
     }
@@ -58,15 +103,13 @@ const hocuspocus = new Hocuspocus({
 
   async onStoreDocument({ document, documentName }) {
     try {
-      const update = encodeStateAsUpdate(document);
-      saveStmt.run(docName(documentName), Buffer.from(update), new Date().toISOString());
+      const update = Y.encodeStateAsUpdate(document);
+      saveStmt.run(documentName, Buffer.from(update), new Date().toISOString());
     } catch (e) {
       console.warn(`onStoreDocument ${documentName}:`, e.message);
     }
   },
 });
-
-function docName(name) { return name; }
 
 const port = Number(process.env.SYNC_PORT ?? 1234);
 const wss = new WebSocketServer({ port });

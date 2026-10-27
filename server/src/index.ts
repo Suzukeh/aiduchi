@@ -6,7 +6,7 @@ import { db, monthUsage, type RoomRow, type NodeRow } from "./db.js";
 import { resolveCreds, generatePatch, dummyPatch, streamChat } from "./ai.js";
 
 const app = express();
-app.use(cors());
+app.use(cors({ exposedHeaders: ["x-snapshot-hash"] }));
 app.use(express.json({ limit: "1mb" }));
 
 const now = () => new Date().toISOString();
@@ -46,6 +46,31 @@ function filesOfNode(roomId: string, nodeId: string | null): Record<string, stri
   }
 }
 
+/** キー順に依存しない内容ハッシュ（保存時の競合検出に使う） */
+function hashFiles(files: Record<string, string>): string {
+  const normalized = Object.keys(files)
+    .sort()
+    .map((k) => `${k}\u0000${files[k]}`)
+    .join("\u0001");
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+}
+
+/** 作業スレッド: 基点から対象ノードまでの会話（古い順、対象を含む） */
+function threadFor(roomId: string, nodeId: string | null): NodeRow[] {
+  if (!nodeId) return [];
+  const out: NodeRow[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = nodeId;
+  while (cursor && !seen.has(cursor) && out.length < 100) {
+    seen.add(cursor);
+    const row = db.prepare(`SELECT * FROM nodes WHERE id = ? AND roomId = ?`).get(cursor, roomId) as NodeRow | undefined;
+    if (!row) break;
+    out.push(row);
+    cursor = row.parentId;
+  }
+  return out.reverse();
+}
+
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 app.post("/api/rooms", (req, res) => {
@@ -79,19 +104,32 @@ app.get("/api/rooms/:id/snapshots/:nodeId", (req, res) => {
   if (!room) return res.status(404).json({ error: "not found" });
   const snap = db.prepare(`SELECT * FROM snapshots WHERE roomId = ? AND nodeId = ?`).get(room.id, req.params.nodeId) as { data: string } | undefined;
   if (!snap) return res.status(404).json({ error: "not found" });
-  res.json(JSON.parse(snap.data));
+  const parsed = JSON.parse(snap.data) as { files?: Record<string, string> };
+  const hash = hashFiles(parsed?.files ?? {});
+  res.setHeader("x-snapshot-hash", hash);
+  // 別オリジン（Vite :5173 → API :3000 等）でも読めるよう本文にも入れる
+  res.json({ files: parsed?.files ?? {}, hash });
+});
+
+// 作業スレッド（基点から対象ノードまでの会話）
+app.get("/api/rooms/:id/nodes/:nodeId/thread", (req, res) => {
+  const room = authRoom(req);
+  if (!room) return res.status(404).json({ error: "not found" });
+  const list = threadFor(room.id, req.params.nodeId).map(publicNode);
+  res.json({ messages: list });
 });
 
 // 手動編集の保存: 現在のファイル内容を新ノード＋スナップショットとして記録
 app.post("/api/rooms/:id/snapshots", (req, res) => {
   const room = authRoom(req);
   if (!room) return res.status(404).json({ error: "not found" });
-  const { parentNodeId, files, label } = req.body ?? {};
+  const { parentNodeId, files, label, baseHash, authorName } = req.body ?? {};
   if (!files || typeof files !== "object") return res.status(400).json({ error: "files required" });
-  const clean: Record<string, string> = {};
+  const clean: Record<string, string> = Object.create(null);
   let total = 0;
   for (const [k, v] of Object.entries(files as Record<string, unknown>)) {
     if (typeof k !== "string" || typeof v !== "string") continue;
+    if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
     if (k.length > 200 || v.length > 200_000) return res.status(400).json({ error: `file too large: ${k}` });
     total += v.length;
     clean[k] = v;
@@ -101,10 +139,15 @@ app.post("/api/rooms/:id/snapshots", (req, res) => {
     const parent = db.prepare(`SELECT id FROM nodes WHERE id = ? AND roomId = ?`).get(parentNodeId, room.id);
     if (!parent) return res.status(400).json({ error: "parent not found" });
   }
+  // 楽観的競合検出: 読み込んだ時点から基点が変わっていたら上書きせず 409
+  const currentBaseHash = hashFiles(filesOfNode(room.id, parentNodeId ?? null));
+  if (typeof baseHash === "string" && baseHash !== currentBaseHash) {
+    return res.status(409).json({ error: "この版は他の変更で更新されています。再読込してください。", currentHash: currentBaseHash });
+  }
   const nodeId = randomUUID().slice(0, 8);
   db.prepare(
     `INSERT INTO nodes (id, roomId, parentId, rootId, authorType, authorLabel, prompt, status, provider, model, diffSummary, createdAt) VALUES (?, ?, ?, ?, 'user', ?, ?, 'review', NULL, NULL, ?, ?)`,
-  ).run(nodeId, room.id, parentNodeId ?? null, parentNodeId ?? "root", req.header("x-user-name") ?? "you",
+  ).run(nodeId, room.id, parentNodeId ?? null, parentNodeId ?? "root", String(authorName ?? req.header("x-user-name") ?? "you").slice(0, 40),
     String(label ?? "手動編集").slice(0, 200), `manual edit (${Object.keys(clean).length} files)`, now());
   db.prepare(`INSERT INTO snapshots (id, roomId, nodeId, data, createdAt) VALUES (?, ?, ?, ?, ?)`)
     .run(randomUUID(), room.id, nodeId, JSON.stringify({ files: clean }), now());
@@ -129,11 +172,12 @@ app.post("/api/rooms/:id/nodes", async (req, res) => {
     ? (db.prepare(`SELECT rootId FROM nodes WHERE id = ?`).get(parsed.data.parentId) as { rootId: string })
     : null;
   const nodeId = randomUUID().slice(0, 8);
+  const authorLabel = String(req.body?.authorName ?? req.header("x-user-name") ?? "you").slice(0, 40);
   const insert = (status: string) => {
     db.prepare(
-      `INSERT INTO nodes (id, roomId, parentId, rootId, authorType, authorLabel, prompt, status, provider, model, diffSummary, createdAt) VALUES (?, ?, ?, ?, 'user', 'you', ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO nodes (id, roomId, parentId, rootId, authorType, authorLabel, prompt, status, provider, model, diffSummary, createdAt) VALUES (?, ?, ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)`,
     ).run(nodeId, room.id, parsed.data.parentId, parentRow?.rootId ?? parsed.data.parentId ?? "root",
-      parsed.data.prompt, status,
+      authorLabel, parsed.data.prompt, status,
       creds && !("forbidden" in creds) ? creds.provider : creds ? "host" : "dummy",
       creds && !("forbidden" in creds) ? creds.model : "dummy-0.1",
       null, now());
@@ -156,11 +200,16 @@ app.post("/api/rooms/:id/nodes", async (req, res) => {
     // 分岐の基点は「親ノードのスナップショット」（rootなら初期状態）
     const baseFiles = filesOfNode(room.id, parsed.data.parentId);
     const ctx = baseFiles;
+    // 同じ作業スレッドの会話だけを文脈に渡す（兄弟分岐の内容は混ぜない）
+    const history = threadFor(room.id, parsed.data.parentId ?? null).map((n) => ({
+      prompt: n.prompt,
+      diffSummary: n.diffSummary,
+    }));
     if (!creds) {
       steps = dummyPatch(parsed.data.prompt, nodeId, provider, model).steps;
     } else {
       provider = creds.provider; model = creds.model;
-      const out = await generatePatch(creds, parsed.data.prompt, ctx, `aiduchi-${room.id}`);
+      const out = await generatePatch(creds, parsed.data.prompt, ctx, `aiduchi-${room.id}`, history);
       steps = out.patch.steps;
       pt = out.promptTokens; ct = out.completionTokens;
       db.prepare(`INSERT INTO ai_usage (roomId, nodeId, provider, model, promptTokens, completionTokens, byok, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)

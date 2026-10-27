@@ -73,17 +73,26 @@ function extractJson(text: string): unknown {
   return JSON.parse(t);
 }
 
+export type HistoryTurn = { prompt: string; diffSummary?: string | null };
+
 export async function generatePatch(
   creds: Creds,
   prompt: string,
   context: unknown,
   session: string,
+  history: HistoryTurn[] = [],
 ): Promise<{ patch: { steps: unknown[] }; promptTokens: number; completionTokens: number }> {
   const contextStr = typeof context === "string" ? context : JSON.stringify(context, null, 1).slice(0, 8000);
-  const messages = [
-    { role: "system", content: CODE_PATCH_SYSTEM },
-    { role: "user", content: `Request: ${prompt}\n\nCurrent state:\n${contextStr || "(empty)"}` },
-  ];
+  const messages: { role: string; content: string }[] = [{ role: "system", content: CODE_PATCH_SYSTEM }];
+  // 同じ作業スレッドの文脈だけを渡す（兄弟分岐の内容は混ぜない）
+  for (const turn of history.slice(-6)) {
+    messages.push({ role: "user", content: `Request: ${turn.prompt}` });
+    messages.push({ role: "assistant", content: `Applied: ${turn.diffSummary ?? "(no change recorded)"}` });
+  }
+  messages.push({
+    role: "user",
+    content: `Request: ${prompt}\n\nCurrent state:\n${contextStr || "(empty)"}`,
+  });
   const body = {
     model: creds.model,
     messages,

@@ -25,11 +25,33 @@ export function listNodes(roomId: string, token: string) {
   return req<NodeMeta[]>(`/api/rooms/${roomId}/nodes`, { headers: { "x-room-token": token } });
 }
 
-export function getSnapshot(roomId: string, token: string, nodeId: string) {
-  return req<unknown>(`/api/rooms/${roomId}/snapshots/${nodeId}`, { headers: { "x-room-token": token } });
+export function getThread(roomId: string, token: string, nodeId: string) {
+  return req<{ messages: NodeMeta[] }>(`/api/rooms/${roomId}/nodes/${nodeId}/thread`, {
+    headers: { "x-room-token": token },
+  });
+}
+
+/** スナップショット本文と、保存時の競合検出に使うハッシュ */
+export async function getSnapshotWithHash(roomId: string, token: string, nodeId: string) {
+  const res = await fetch(`${API}/api/rooms/${roomId}/snapshots/${nodeId}`, {
+    headers: { "x-room-token": token },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { files?: Record<string, string>; hash?: string };
+  return { files: body.files ?? {}, hash: body.hash ?? res.headers.get("x-snapshot-hash") ?? "" };
 }
 
 export type Byok = { provider: string; key: string; model: string };
+
+function byokHeaders(byok?: Byok): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (byok && byok.provider && byok.key) {
+    headers["x-byok-provider"] = byok.provider;
+    headers["x-byok-key"] = byok.key;
+    if (byok.model) headers["x-byok-model"] = byok.model;
+  }
+  return headers;
+}
 
 export function createNode(
   roomId: string,
@@ -37,20 +59,16 @@ export function createNode(
   parentId: string | null,
   prompt: string,
   byok?: Byok,
+  userName?: string,
 ) {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-room-token": token,
-  };
-  if (byok && byok.provider && byok.key) {
-    headers["x-byok-provider"] = byok.provider;
-    headers["x-byok-key"] = byok.key;
-    if (byok.model) headers["x-byok-model"] = byok.model;
-  }
   return req<NodeMeta & { error?: string }>(`/api/rooms/${roomId}/nodes`, {
     method: "POST",
-    headers,
-    body: JSON.stringify({ parentId, prompt }),
+    headers: {
+      "Content-Type": "application/json",
+      "x-room-token": token,
+      ...byokHeaders(byok),
+    },
+    body: JSON.stringify({ parentId, prompt, authorName: userName }),
   });
 }
 
@@ -68,14 +86,7 @@ export function abandonNode(roomId: string, token: string, nodeId: string) {
   });
 }
 
-export function saveWindows(roomId: string, token: string, windows: unknown[]) {
-  return fetch(`${API}/api/rooms/${roomId}/windows`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "x-room-token": token },
-    body: JSON.stringify({ windows }),
-  }).catch(() => undefined);
-}
-
+/** 現在のファイル群を新しいチェックポイントとして保存。baseHash が古ければ 409 */
 export function saveSnapshot(
   roomId: string,
   token: string,
@@ -83,14 +94,11 @@ export function saveSnapshot(
   files: Record<string, string>,
   label: string,
   userName: string,
+  baseHash: string,
 ) {
   return req<NodeMeta>(`/api/rooms/${roomId}/snapshots`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-room-token": token, "x-user-name": userName },
-    body: JSON.stringify({ parentNodeId, files, label }),
+    headers: { "Content-Type": "application/json", "x-room-token": token },
+    body: JSON.stringify({ parentNodeId, files, label, baseHash, authorName: userName }),
   });
-}
-
-export function loadWindows(roomId: string, token: string) {
-  return req<unknown[]>(`/api/rooms/${roomId}/windows`, { headers: { "x-room-token": token } });
 }

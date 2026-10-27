@@ -47,9 +47,8 @@ function layout(nodes: NodeMeta[]): Map<string, { x: number; y: number }> {
   return pos;
 }
 
-export function TreeOverlay() {
+export function TreeOverlay({ onClose }: { onClose: () => void }) {
   const nodes = useStore((s) => s.nodes);
-  const setShowTree = useStore((s) => s.setShowTree);
   const openWindow = useStore((s) => s.openWindow);
 
   const { rfNodes, rfEdges } = useMemo(() => {
@@ -104,7 +103,7 @@ export function TreeOverlay() {
         <div className="text-sm font-medium text-gray-200">進捗ツリー</div>
         <button
           className="rounded p-1.5 text-gray-400 hover:bg-white/10 hover:text-gray-200"
-          onClick={() => setShowTree(false)}
+          onClick={onClose}
         >
           <X size={16} />
         </button>
@@ -118,7 +117,7 @@ export function TreeOverlay() {
           onNodeClick={(_e, n) => {
             if (n.id !== "root") {
               openWindow(n.id);
-              setShowTree(false);
+              onClose();
             }
           }}
         >

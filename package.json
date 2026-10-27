@@ -12,6 +12,8 @@
     "dev:sync": "npm --prefix server run dev:sync",
     "build": "npm --workspace packages/protocol run build && npm --workspace server run build && npm --workspace apps/web run build",
     "start": "npm --prefix server run start",
+    "build:server": "npm --workspace packages/protocol run build && npm --workspace server run build",
+    "pretest": "npm run build:server",
     "test": "playwright test",
     "test:headed": "playwright test --headed"
   },

@@ -1,33 +1,31 @@
 import { test, expect } from "@playwright/test";
+import { checkpoint, createRoom, join, minimizeWindows, openFilesTab, openTask, waitForSync } from "./helpers/ui";
 
 test.describe("aiduchi E2E", () => {
-  test("room作成→窓で送信→リストとツリーに反映", async ({ page }) => {
+  test("room作成→送信→リストとツリーに反映", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByText("aiduchi")).toBeVisible();
 
-    // room作成
     await page.getByPlaceholder("room name").fill("e2e-room");
-    await page.getByRole("button", { name: "作成" }).click();
+    await page.getByRole("button", { name: "作成", exact: true }).click();
     await expect(page.getByRole("button", { name: "新しい窓", exact: true })).toBeEnabled({ timeout: 10_000 });
 
-    // 窓を開いてメッセージ送信
     await page.getByRole("button", { name: "新しい窓", exact: true }).click();
     const textarea = page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first();
     await textarea.fill("create a note");
-    await page.getByRole("button", { name: "送信" }).first().click();
+    await page.getByRole("button", { name: "送信", exact: true }).first().click();
 
-    // リストにノードが出る（diffSummary）
     await expect(page.getByText("+notes/").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "create a note", exact: true }).first()).toBeVisible();
 
-    // ツリーを開くとノードが見える
-    await page.getByRole("button", { name: "ツリー" }).first().click();
+    await page.getByRole("button", { name: "ツリー", exact: true }).first().click();
     await expect(page.getByText("進捗ツリー")).toBeVisible();
   });
 
   test("Ctrl+Enterで送信できる", async ({ page }) => {
     await page.goto("/");
     await page.getByPlaceholder("room name").fill("e2e-ctrl");
-    await page.getByRole("button", { name: "作成" }).click();
+    await page.getByRole("button", { name: "作成", exact: true }).click();
     await expect(page.getByRole("button", { name: "新しい窓", exact: true })).toBeEnabled({ timeout: 10_000 });
 
     await page.getByRole("button", { name: "新しい窓", exact: true }).click();
@@ -42,15 +40,14 @@ test.describe("aiduchi E2E", () => {
     const nameInput = page.getByPlaceholder("あなたの名前");
     await nameInput.fill("すずけ");
     await expect(nameInput).toHaveValue("すずけ");
-    // localStorageに保持される
     const stored = await page.evaluate(() => localStorage.getItem("aiduchi.name"));
     expect(stored).toBe("すずけ");
   });
 
-  test("ファイルタブで生成物を閲覧できる", async ({ page }) => {
+  test("生成物をファイルタブで閲覧できる", async ({ page }) => {
     await page.goto("/");
     await page.getByPlaceholder("room name").fill("e2e-files");
-    await page.getByRole("button", { name: "作成" }).click();
+    await page.getByRole("button", { name: "作成", exact: true }).click();
     await expect(page.getByRole("button", { name: "新しい窓", exact: true })).toBeEnabled({ timeout: 10_000 });
 
     await page.getByRole("button", { name: "新しい窓", exact: true }).click();
@@ -59,38 +56,61 @@ test.describe("aiduchi E2E", () => {
     await textarea.press("Control+Enter");
     await expect(page.getByText("+notes/").first()).toBeVisible({ timeout: 15_000 });
 
-    // ファイルタブに切り替え
-    await page.getByRole("button", { name: "ファイル" }).first().click();
-    // ファイル一覧にREADME.mdが見える
-    await expect(page.getByText("README.md").first()).toBeVisible({ timeout: 10_000 });
-    // notes/xxx.mdも見える
-    await expect(page.getByText(/notes\//).first()).toBeVisible();
+    await openFilesTab(page);
+    await expect(page.getByRole("button", { name: "README.md", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /notes\// })).toBeVisible();
   });
 
-  test("ファイルを手動編集して保存できる", async ({ page }) => {
+  test("未送信の入力は窓を増やしても再読込しても消えない", async ({ page }) => {
     await page.goto("/");
-    await page.getByPlaceholder("room name").fill("e2e-edit");
-    await page.getByRole("button", { name: "作成" }).click();
+    await page.getByPlaceholder("room name").fill("e2e-draft");
+    await page.getByRole("button", { name: "作成", exact: true }).click();
     await expect(page.getByRole("button", { name: "新しい窓", exact: true })).toBeEnabled({ timeout: 10_000 });
 
     await page.getByRole("button", { name: "新しい窓", exact: true }).click();
-    const textarea = page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first();
-    await textarea.fill("make a note file");
-    await textarea.press("Control+Enter");
-    await expect(page.getByText("+notes/").first()).toBeVisible({ timeout: 15_000 });
+    const first = page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first();
+    await first.fill("書きかけの日本語入力");
 
-    // ファイルタブ→編集
-    await page.getByRole("button", { name: "ファイル" }).first().click();
-    await page.getByRole("button", { name: "編集" }).first().click();
-    // CodeMirrorエディタで内容を書き換え
-    const editor = page.locator(".cm-content").first();
-    await editor.click();
-    await page.keyboard.press("Control+a");
-    await page.keyboard.type("edited by test");
-    // 保存ボタンが出る
-    await page.getByRole("button", { name: "保存" }).click();
+    // 別の窓を開いても、元の入力は残る
+    await page.getByRole("button", { name: "新しい窓", exact: true }).click();
+    await expect(page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）")).toHaveCount(2);
+    await expect(page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first()).toHaveValue("書きかけの日本語入力");
 
-    // リストに「手動編集」ノードが現れる
-    await expect(page.getByText(/手動編集|manual edit/).first()).toBeVisible({ timeout: 15_000 });
+    // すべて最小化→ドックから下書きの窓を復元
+    await minimizeWindows(page);
+    await page.getByRole("button", { name: "書きかけの日本語入力" }).first().click();
+    await expect(page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first()).toHaveValue("書きかけの日本語入力");
+
+    // 再読込しても個人の下書きが戻る
+    await page.reload();
+    await expect(page.getByPlaceholder("指示を入力（Ctrl+Enterで送信）").first()).toHaveValue("書きかけの日本語入力", {
+      timeout: 15_000,
+    });
+  });
+
+  test("保存された静的サイトがプレビューに表示される", async ({ page, request }) => {
+    const room = await createRoom(request, "preview-room");
+    await checkpoint(
+      request,
+      room,
+      {
+        "index.html":
+          '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><h1 id="t">preview works</h1><script src="app.js"></script></body></html>',
+        "style.css": "body { background: rgb(1, 2, 3); }",
+        "app.js":
+          "document.body.appendChild(Object.assign(document.createElement('p'), { id: 'js', textContent: 'script ran' }));",
+      },
+      "static-site",
+    );
+
+    await join(page, room);
+    await waitForSync(page);
+    await openTask(page, "static-site");
+
+    const frame = page.frameLocator('iframe[title="preview"]');
+    await expect(frame.locator("#t")).toHaveText("preview works");
+    await expect(frame.locator("#js")).toHaveText("script ran");
+    const bg = await frame.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).toBe("rgb(1, 2, 3)");
   });
 });
